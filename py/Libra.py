@@ -1,10 +1,9 @@
-# Libra.py
-import os, requests, zipfile, torch
+import os, requests, zipfile, torch, logging
 import torch.nn as nn
 from io import BytesIO
 from torch.utils.data import DataLoader, TensorDataset
 
-# 🔐 Cloudinary config
+# ========== 🔐 Cloudinary Config ==========
 CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "dj4bwntzb")
 API_KEY = os.getenv("CLOUDINARY_API_KEY", "354656419316393")
 API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "M-Trl9ltKDHyo1dIP2AaLOG-WPM")
@@ -12,32 +11,61 @@ MODEL_URL = f"https://res.cloudinary.com/{CLOUD_NAME}/raw/upload/v1/model.pt.zip
 MODEL_PATH = "/tmp/model.pt"
 ZIP_PATH = "/tmp/model.pt.zip"
 
-# 📦 Use GPU if available
+# ========== ⚙️ Device Setup ==========
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"🔌 Using device: {DEVICE}")
+logging.basicConfig(level=logging.INFO)
+logging.info(f"🔌 Using device: {DEVICE}")
 
-# 🧠 Model definition
+# ========== 🧠 Model Definition ==========
 class LibraModel(nn.Module):
-    def __init__(self):
+    def __init__(self, input_size=1, hidden_size=64, lstm_layers=2, dropout=0.2, attn_heads=2):
         super().__init__()
-        self.lstm = nn.LSTM(input_size=1, hidden_size=64, num_layers=2, batch_first=True)
-        self.fc = nn.Linear(64, 5)
+        logging.info("🧠 Initializing LibraModel...")
+
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=lstm_layers,
+            dropout=dropout,
+            batch_first=True
+        )
+        self.attn = nn.MultiheadAttention(
+            embed_dim=hidden_size,
+            num_heads=attn_heads,
+            batch_first=True
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.fc = nn.Linear(hidden_size, 5)
+
+        logging.info(f"✅ LSTM: input_size={input_size}, hidden_size={hidden_size}, layers={lstm_layers}")
+        logging.info(f"✅ MultiHeadAttention: embed_dim={hidden_size}, heads={attn_heads}")
+        logging.info("✅ Dropout and FC initialized.")
 
     def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
+        logging.debug(f"📥 Input shape: {x.shape}")
+        lstm_out, _ = self.lstm(x)                          # Shape: (B, T, H)
+        logging.debug(f"🔁 LSTM output shape: {lstm_out.shape}")
 
-# 🔽 Download model.pt.zip from Cloudinary and extract
+        attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
+        logging.debug(f"🔍 Attention output shape: {attn_out.shape}")
+
+        out = self.dropout(attn_out[:, -1, :])              # Take last time step, apply dropout
+        output = self.fc(out)
+        logging.debug(f"🎯 Final output shape: {output.shape}")
+
+        return output
+
+# ========== ⬇️ Model Download ==========
 def download_model_from_cloudinary():
-    print("📦 Downloading model from Cloudinary...")
+    logging.info("📦 Downloading model from Cloudinary...")
     r = requests.get(MODEL_URL, auth=(API_KEY, API_SECRET))
     if r.status_code != 200:
-        raise RuntimeError(f"Failed to download model: {r.status_code}")
+        raise RuntimeError(f"❌ Failed to download model: {r.status_code}")
     with zipfile.ZipFile(BytesIO(r.content)) as z:
         z.extractall("/tmp")
-    print("✅ Model extracted to /tmp.")
+    logging.info("✅ Model extracted to /tmp.")
 
-# 🚀 Load model with GPU support
+# ========== 🚀 Load Model ==========
 def load_model():
     if not os.path.exists(MODEL_PATH):
         download_model_from_cloudinary()
@@ -45,18 +73,22 @@ def load_model():
     model = LibraModel().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
-    print("✅ Model loaded.")
+    logging.info("✅ Model loaded.")
     return model
 
-# 🔮 Predict next 5 ticks from 300
+# ========== 🔮 Predict Function ==========
 def predict_ticks(model, ticks):
     x = torch.tensor(ticks, dtype=torch.float32).view(1, 300, 1).to(DEVICE)
+    logging.debug(f"📡 Input to model: {x.shape}")
     with torch.no_grad():
-        return model(x).squeeze().cpu().tolist()
+        output = model(x)
+    result = output.squeeze().cpu().tolist()
+    logging.info(f"📈 Predicted next 5 ticks: {result}")
+    return result
 
-# 🔁 Retrain model on new batch of (X, Y) and upload
+# ========== 🔁 Retrain + Upload ==========
 def retrain_and_upload(model, x_data, y_data, epochs=10):
-    print("🔄 Retraining...")
+    logging.info("🔄 Retraining model...")
     model.train()
     x_tensor = torch.tensor(x_data, dtype=torch.float32).view(-1, 300, 1)
     y_tensor = torch.tensor(y_data, dtype=torch.float32).view(-1, 5)
@@ -77,16 +109,16 @@ def retrain_and_upload(model, x_data, y_data, epochs=10):
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
-        print(f"📚 Epoch {epoch+1}: Loss = {total_loss:.4f}")
+        logging.info(f"📚 Epoch {epoch+1}: Loss = {total_loss:.4f}")
 
     model.eval()
     torch.save(model.state_dict(), MODEL_PATH)
-    print("💾 Model saved locally.")
+    logging.info("💾 Model saved locally.")
 
     # Zip model.pt
     with zipfile.ZipFile(ZIP_PATH, 'w') as zipf:
         zipf.write(MODEL_PATH, arcname="model.pt")
-    print("📦 Model zipped.")
+    logging.info("📦 Model zipped.")
 
     # Upload to Cloudinary
     with open(ZIP_PATH, "rb") as f:
@@ -97,6 +129,6 @@ def retrain_and_upload(model, x_data, y_data, epochs=10):
             data={"public_id": "model.pt", "overwrite": True}
         )
     if response.status_code == 200:
-        print("🚀 Uploaded new model to Cloudinary.")
+        logging.info("🚀 Uploaded new model to Cloudinary.")
     else:
-        print(f"❌ Upload failed: {response.text}")
+        logging.error(f"❌ Upload failed: {response.text}")
