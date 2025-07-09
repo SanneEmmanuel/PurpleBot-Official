@@ -1,13 +1,9 @@
 services:
   - type: web
-    name: libra-engine
-    env: python
+    name: purplebot-official
+    env: docker
     plan: free
     repo: https://github.com/SanneEmmanuel/PurpleBot-Official
     branch: main
-    rootDir: py
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
-    envVars:
-      - key: PORT
-        value: 10000
+    rootDir: .
+    dockerfilePath: Dockerfile
