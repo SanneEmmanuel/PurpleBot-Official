@@ -1,8 +1,18 @@
 from fastapi import FastAPI
 from Libra import load_model, predict_ticks, retrain_and_upload
 import asyncio, websockets, nest_asyncio, json
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+# ✅ Allow all origins (for dev; restrict in production)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or specify your frontend domain like ["https://yourfrontend.com"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 try:
     model = load_model()
     print("✅ Model loaded successfully.")
