@@ -25,8 +25,12 @@ async def getTicks(count=300):
 
 
 # 🔧 Background task for listening and retraining
-async def post_prediction_learn(history, predicted):
-    actual = await collect_next_ticks()
+async def post_prediction_learn(predicted):
+    await asyncio.sleep(5)  # Wait 5 seconds
+    ticks = await getTicks(305)  # Get 305 ticks
+    actual = ticks[:5]           # First 5 are the actual next ticks
+    history = ticks[5:]          # Remaining 300 are the history
+
     print("📈 Predicted:", predicted)
     print("📊 Actual   :", actual)
     print("🔍 Difference:", [round(a - p, 5) for a, p in zip(actual, predicted)])
@@ -36,13 +40,10 @@ async def post_prediction_learn(history, predicted):
 async def predict():
     # Step 1: Fetch 300 historical ticks
     history = await getTicks()
-
     # Step 2: Predict next 5 ticks
     predicted = predict_ticks(model, history)
     print("Prediction Ran Successfully\n::",predicted)
-
     # Step 3: Start background task for collecting actual + retraining
-    asyncio.create_task(post_prediction_learn(history, predicted))
-
+    asyncio.create_task(post_prediction_learn(predicted))
     # Step 4: Return predicted values immediately
     return { "predicted": predicted }
