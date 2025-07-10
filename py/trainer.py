@@ -1,4 +1,5 @@
-# @title 🔁 Upload Model, Install Dependencies & Train
+
+# @title Training on Collab by Sanne Karibo\n 🔁 Upload Model, Install Dependencies & Train
 from google.colab import files
 import os, asyncio, json
 import importlib.util
@@ -16,8 +17,8 @@ else:
 
 print(f"✅ Uploaded: {model_filename}")
 
-# === 📦 Install dependencies ===
-!pip install websockets nest_asyncio torch numpy requests --quiet
+# ✅ Install all required dependencies quietly
+!pip install websockets nest_asyncio torch numpy requests cloudinary --quiet
 
 # === 🧠 Load model file dynamically ===
 spec = importlib.util.spec_from_file_location("libra_module", model_filename)
@@ -38,14 +39,14 @@ async def getTicks(count=300):
             "count": count,
             "end": "latest",
             "style": "ticks"
-        })) 
+        }))
         response = json.loads(await ws.recv())
         prices = response["history"]["prices"]
         print("📨 Received", len(prices), "ticks.")
         return prices
 
 # === 🔃 Fetch ticks ===
-tick_data = asyncio.run(getTicks(10000))
+tick_data = asyncio.run(getTicks(600))
 
 # === 🧹 Prepare (X, Y) data for training ===
 X, Y = [], []
@@ -63,4 +64,4 @@ print(f"🧪 Prepared {len(X)} samples.")
 model = libra.LibraModel()
 trained = libra.retrain_and_upload(model, X, Y, epochs=100, peft_rank=0)
 
-print("✅ Training complete.")
+print("✅ Training complete::",trained)
