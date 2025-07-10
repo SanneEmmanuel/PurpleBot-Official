@@ -36,7 +36,7 @@ async def post_prediction_learn(predicted):
     print("📈 Predicted:", predicted)
     print("📊 Actual   :", actual)
     print("🔍 Difference:", [round(a - p, 5) for a, p in zip(actual, predicted)])
-    retrain_and_upload(model, [history], [actual])
+    model=retrain_and_upload(model, [history], [actual])
 
 @app.post("/predict")
 async def predict():
