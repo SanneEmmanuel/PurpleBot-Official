@@ -5,6 +5,9 @@ import torch.nn.functional as F
 from io import BytesIO
 from torch.utils.data import DataLoader, TensorDataset
 from collections import deque
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 # ========== 🔐 Cloudinary Config ==========
 CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "dj4bwntzb")
@@ -175,26 +178,31 @@ class LibraModel(nn.Module):
 
 # ========== ⬇️⬆️ Upload/Download Helpers ==========
 def upload_model_with_retry(max_attempts=3):
-    """Upload model to Cloudinary with retry mechanism"""
+    """Upload model to Cloudinary with retry mechanism using Cloudinary SDK"""
     logging.info("📦 Zipping model for upload...")
     with zipfile.ZipFile(ZIP_PATH, 'w') as zipf:
         zipf.write(MODEL_PATH, arcname="model.pt")
-    
+
+    # Configure Cloudinary if not already set
+    cloudinary.config(
+        cloud_name=CLOUD_NAME,
+        api_key=API_KEY,
+        api_secret=API_SECRET,
+        secure=True
+    )
+
     attempts = 0
     while attempts < max_attempts:
         try:
-            with open(ZIP_PATH, "rb") as f:
-                response = requests.post(
-                    f"https://api.cloudinary.com/v1_1/{CLOUD_NAME}/raw/upload",
-                    auth=(API_KEY, API_SECRET),
-                    files={"file": f},
-                    data={"public_id": "model.pt", "overwrite": True}
-                )
-            if response.status_code == 200:
-                logging.info("✅ Upload successful.")
-                return True
-            else:
-                raise RuntimeError(f"Status {response.status_code}: {response.text}")
+            result = cloudinary.uploader.upload(
+                ZIP_PATH,
+                resource_type='raw',
+                public_id="model.pt",
+                overwrite=True,
+                use_filename=True
+            )
+            logging.info(f"✅ Upload successful: {result.get('secure_url')}")
+            return True
         except Exception as e:
             attempts += 1
             if attempts < max_attempts:
@@ -205,15 +213,45 @@ def upload_model_with_retry(max_attempts=3):
                 logging.error(f"❌ Upload failed after {max_attempts} attempts: {str(e)}")
                 return False
 
+
 def download_model_from_cloudinary():
-    """Download model from Cloudinary with error handling"""
-    logging.info("📦 Downloading model from Cloudinary...")
-    r = requests.get(MODEL_URL, auth=(API_KEY, API_SECRET))
-    if r.status_code != 200:
-        raise RuntimeError(f"HTTP Error {r.status_code}")
-    with zipfile.ZipFile(BytesIO(r.content)) as z:
-        z.extractall("/tmp")
-    logging.info("✅ Model downloaded and extracted.")
+    """Download model from Cloudinary using signed URL and extract it"""
+    logging.info("📥 Downloading model ZIP from Cloudinary...")
+
+    # Ensure Cloudinary is configured
+    cloudinary.config(
+        cloud_name=CLOUD_NAME,
+        api_key=API_KEY,
+        api_secret=API_SECRET,
+        secure=True
+    )
+
+    try:
+        # Generate signed URL valid for 10 minutes
+        url, options = cloudinary.utils.cloudinary_url(
+            "model.pt",
+            resource_type='raw',
+            type='upload',
+            sign_url=True,
+            expires_at=int(time.time()) + 600
+        )
+
+        response = requests.get(url)
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to download model: HTTP {response.status_code}")
+
+        with open(ZIP_PATH, "wb") as f:
+            f.write(response.content)
+        logging.info(f"✅ ZIP saved to {ZIP_PATH}")
+
+        # Extract contents to /tmp
+        with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
+            zip_ref.extractall("/tmp")
+        logging.info("✅ Model extracted to /tmp")
+    except Exception as e:
+        logging.error(f"❌ Download failed: {e}")
+        raise
+
 
 # ========== 🚀 Load Model ==========
 def load_model():
