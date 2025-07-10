@@ -1,7 +1,6 @@
 from fastapi import FastAPI
 from Libra import load_model, predict_ticks, retrain_and_upload
-import asyncio
-from deriv_api import DerivAPI
+import asyncio, websockets, nest_asyncio, json
 
 app = FastAPI()
 model = load_model()
@@ -9,39 +8,21 @@ model = load_model()
 SYMBOL = "stpRng"
 
 # 📥 Get 300 latest historical ticks
-async def fetch_history(symbol=SYMBOL, count=300):
-    api = DerivAPI(app_id=1089)
-    response = await api.send({
-        "ticks_history": symbol,
-        "count": count,
-        "end": "latest",
-        "style": "ticks"
-    })
-    await api.close()
-    return response["history"]["prices"]
 
-# 📡 Collect next 5 live ticks
-async def collect_next_ticks(symbol=SYMBOL, count=5):
-    api = DerivAPI(app_id=1089)
-    result = []
-    event = asyncio.Event()
+async def getTicks(count=300):
+    uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+    async with websockets.connect(uri) as ws:
+        await ws.send(json.dumps({
+            "ticks_history": "stpRNG",
+            "count": count,
+            "end": "latest",
+            "style": "ticks"
+        })) 
 
-    stream = await api.subscribe({"ticks": symbol})
+        prices = json.loads(await ws.recv())["history"]["prices"]
+        print("📨 Received:",prices )
+        return prices
 
-    def on_tick(data):
-        try:
-            price = data["tick"]["quote"]
-            result.append(price)
-            if len(result) >= count:
-                event.set()
-        except:
-            pass
-
-    stream.subscribe(on_tick)
-    await event.wait()
-    await stream.unsubscribe()
-    await api.close()
-    return result
 
 # 🔧 Background task for listening and retraining
 async def post_prediction_learn(history, predicted):
@@ -54,10 +35,11 @@ async def post_prediction_learn(history, predicted):
 @app.post("/predict")
 async def predict():
     # Step 1: Fetch 300 historical ticks
-    history = await fetch_history()
+    history = await getTicks()
 
     # Step 2: Predict next 5 ticks
     predicted = predict_ticks(model, history)
+    print("Prediction Ran Successfully\n::",predicted)
 
     # Step 3: Start background task for collecting actual + retraining
     asyncio.create_task(post_prediction_learn(history, predicted))
