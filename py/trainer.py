@@ -61,5 +61,6 @@ print(f"🧪 Prepared {len(X)} samples.")
 
 # === 🔧 Train model ===
 model = libra.LibraModel()
-trained = libra.retrain_and_upload(model, X, Y, epochs=50)
+trained = libra.retrain_and_upload(model, X, Y, epochs=100, peft_rank=0)
+
 print("✅ Training complete.")
