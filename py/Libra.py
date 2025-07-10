@@ -147,11 +147,14 @@ class LibraModel(nn.Module):
         logging.info(f"✅ Dual-head output: mean + variance estimation")
 
     def enable_peft(self, rank=8):
-        """Enable Parameter Efficient Fine-Tuning"""
-        logging.info("🔧 Enabling PEFT adapters")
-        self.fc_mean = PEFTAdapter(self.fc_mean, rank)
-        self.fc_var = PEFTAdapter(self.fc_var, rank)
+    """Enable Parameter Efficient Fine-Tuning"""
+    if rank <= 0:
+        logging.info("⚠️ PEFT rank is 0 or less. Skipping PEFT setup.")
         return self
+    logging.info("🔧 Enabling PEFT adapters")
+    self.fc_mean = PEFTAdapter(self.fc_mean, rank)
+    self.fc_var = PEFTAdapter(self.fc_var, rank)
+    return self
 
     def forward(self, x):
         # LSTM processing
