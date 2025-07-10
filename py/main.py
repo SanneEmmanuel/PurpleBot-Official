@@ -3,12 +3,14 @@ from Libra import load_model, predict_ticks, retrain_and_upload
 import asyncio, websockets, nest_asyncio, json
 
 app = FastAPI()
-model = load_model()
-
-SYMBOL = "stpRng"
+try:
+    model = load_model()
+    print("✅ Model loaded successfully.")
+except Exception as e:
+    print(f"❌ Failed to load model: {e}")
+    model = None
 
 # 📥 Get 300 latest historical ticks
-
 async def getTicks(count=300):
     uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
     async with websockets.connect(uri) as ws:
