@@ -1,4 +1,4 @@
-#Libra Version5 By Dr Sanne Karibo 
+#Libra Pro_V5 by Sanne Karibo
 import os, requests, zipfile, torch, logging, math, time, numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
@@ -23,7 +23,7 @@ logging.info(f"🔌 Using device: {DEVICE}")
 # Create checkpoint directory
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-# ========== � Helper Functions ==========
+# ==========  Helper Functions ==========
 def convert_to_log_returns(prices):
     """Convert price sequence to log returns with initial zero"""
     returns = [0.0]  # Initial zero return
