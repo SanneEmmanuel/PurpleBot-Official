@@ -197,7 +197,7 @@ def upload_model_with_retry(max_attempts=3):
             result = cloudinary.uploader.upload(
                 ZIP_PATH,
                 resource_type='raw',
-                public_id="model.pt",
+                public_id="model.pt.zip",
                 overwrite=True,
                 use_filename=True
             )
@@ -229,7 +229,7 @@ def download_model_from_cloudinary():
     try:
         # Generate signed URL valid for 10 minutes
         url, options = cloudinary.utils.cloudinary_url(
-            "model.pt",
+            "model.pt.zip",
             resource_type='raw',
             type='upload',
             sign_url=True,
