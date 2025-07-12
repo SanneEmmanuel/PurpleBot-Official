@@ -1,5 +1,4 @@
 
-
 # @title Training on Collab by Sanne Karibo\n 🔁 Upload Model, Install Dependencies & Train
 from google.colab import files
 import os, asyncio, json
