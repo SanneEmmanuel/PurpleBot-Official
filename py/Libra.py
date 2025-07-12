@@ -351,6 +351,7 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     val_loader = DataLoader(val_dataset, batch_size=32)
     
     # Enable PEFT
+    if peft_rank > 0:
     model = model.enable_peft(peft_rank)
     model.train().to(DEVICE)
     
