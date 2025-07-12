@@ -270,6 +270,7 @@ def load_model():
                     logging.error("❌ Download failed 3 times. Creating fresh model...")
                     model = LibraModel().to(DEVICE)
                     torch.save(model.state_dict(), MODEL_PATH)
+                    print("😔saved New Model")
                     if upload_model_with_retry():
                         logging.info("🆕 Fresh model uploaded to Cloudinary")
                     return model
