@@ -3,6 +3,8 @@
 from google.colab import files
 import os, asyncio, json
 import importlib.util
+import logging
+logging.basicConfig(level=logging.INFO, format="🔧 %(message)s")
 
 print("📤 Upload your `Libra.py` file...")
 uploaded = files.upload()
