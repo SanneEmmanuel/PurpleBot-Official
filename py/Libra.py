@@ -6,7 +6,8 @@ import torch
 import logging
 import math
 import time
-import numpy as np
+import jax.numpy as jnp
+from jax import jit
 import torch.nn as nn
 import torch.nn.functional as F
 from io import BytesIO
@@ -37,38 +38,41 @@ logging.info(f"🔌 Using device: {DEVICE}")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # ==========  Vectorized Helper Functions ==========
+@jit
 def convert_to_log_returns(prices: List[float]) -> np.ndarray:
     """Branchless vectorized conversion to log returns"""
-    prices_arr = np.asarray(prices, dtype=np.float32)
+    prices_arr = jnp.asarray(prices, dtype=jnp.float32)
     # Avoid division by zero by ensuring shifted array is non-zero at division points
-    shifted = np.roll(prices_arr, 1)
+    shifted = jnp.roll(prices_arr, 1)
     shifted[0] = 0  # First element has no prior price, log return is 0
     
-    ratio = np.divide(prices_arr, shifted, out=np.ones_like(prices_arr), where=(shifted!=0))
+    ratio = jnp.divide(prices_arr, shifted, out=jnp.ones_like(prices_arr), where=(shifted!=0))
     # Ensure log is only taken for positive ratios
-    return np.log(ratio, out=np.zeros_like(prices_arr), where=(ratio>0))
+    return jnp.log(ratio, out=jnp.zeros_like(prices_arr), where=(ratio>0))
 
+@jit
 def convert_to_future_returns(input_prices: List[float], output_prices: List[float]) -> np.ndarray:
     """Branchless vectorized future log returns"""
-    input_arr = np.asarray(input_prices, dtype=np.float32)
-    output_arr = np.asarray(output_prices, dtype=np.float32)
+    input_arr = jnp.asarray(input_prices, dtype=jnp.float32)
+    output_arr = jnp.asarray(output_prices, dtype=jnp.float32)
     
     # Chain the last input price with the output prices for continuous calculation
-    full_price_series = np.concatenate(([input_arr[-1]], output_arr))
+    full_price_series = jnp.concatenate(([input_arr[-1]], output_arr))
     
     # Calculate log returns on the full series
-    shifted = np.roll(full_price_series, 1)
-    ratio = np.divide(full_price_series, shifted, out=np.ones_like(full_price_series), where=(shifted!=0))
-    log_returns = np.log(ratio, out=np.zeros_like(full_price_series), where=(ratio>0))
+    shifted = jnp.roll(full_price_series, 1)
+    ratio = jnp.divide(full_price_series, shifted, out=jnp.ones_like(full_price_series), where=(shifted!=0))
+    log_returns = jnp.log(ratio, out=jnp.zeros_like(full_price_series), where=(ratio>0))
     
     return log_returns[1:] # Return the 5 future log returns
 
+@jit
 def decode_log_returns(last_price: float, log_returns: np.ndarray) -> List[float]:
     """Vectorized conversion of log returns to price predictions"""
     # Cumulative sum of log returns is the log of the price ratio
-    cum_log_returns = np.cumsum(log_returns)
+    cum_log_returns = jnp.cumsum(log_returns)
     # Price = last_price * exp(cumulative_log_return)
-    return (last_price * np.exp(cum_log_returns)).astype(np.float32).tolist()
+    return (last_price * jnp.exp(cum_log_returns)).astype(jnp.float32).tolist()
 
 # ========== 🧠 Enhanced Model Definition ==========
 class TemporalDecayAttention(nn.Module):
@@ -275,12 +279,14 @@ def load_model() -> LibraModel:
     # Load existing model
     model = LibraModel().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model = torch.compile(model)
     model.eval()
     return model
 
 # ========== 🔮 Enhanced Predict Function ==========
 def predict_ticks(model: LibraModel, ticks: List[float]) -> Dict:
     """Predict next 5 ticks with confidence estimation"""
+        model = torch.compile(model)
     model.eval() # Ensure model is in evaluation mode
     
     # Vectorized conversion to log returns
@@ -296,7 +302,7 @@ def predict_ticks(model: LibraModel, ticks: List[float]) -> Dict:
     log_var = log_var.squeeze().cpu().numpy()
     
     # Calculate confidence intervals (95% CI)
-    std = np.exp(0.5 * log_var)
+    std = jnp.exp(0.5 * log_var)
     ci_low = mean - 1.96 * std
     ci_high = mean + 1.96 * std
     
@@ -324,8 +330,8 @@ def retrain_and_upload(model: LibraModel, x_data: List[List[float]], y_data: Lis
     """Enhanced training with early stopping, metrics, and PEFT."""
     # Preallocate arrays for vectorized processing
     num_samples = len(x_data)
-    x_returns = np.zeros((num_samples, 300), dtype=np.float32)
-    y_returns = np.zeros((num_samples, 5), dtype=np.float32)
+    x_returns = np.zeros((num_samples, 300), dtype=jnp.float32)
+    y_returns = np.zeros((num_samples, 5), dtype=jnp.float32)
     
     # Vectorized data conversion
     for i in range(num_samples):
@@ -389,7 +395,7 @@ def retrain_and_upload(model: LibraModel, x_data: List[List[float]], y_data: Lis
     best_val_loss = float('inf')
     epochs_no_improve = 0
     # Correction: Use the modern torch.amp.GradScaler API
-    scaler = torch.amp.GradScaler(device_type=DEVICE.type, enabled=use_gpu)
+    scaler = torch.cuda.amp.GradScaler(enabled=use_gpu)
     
     # Training loop
     for epoch in range(epochs):
@@ -403,7 +409,7 @@ def retrain_and_upload(model: LibraModel, x_data: List[List[float]], y_data: Lis
             xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             
-            with torch.autocast(device_type=DEVICE.type, dtype=torch.float16, enabled=use_gpu):
+            with torch.cuda.amp.autocast(dtype=torch.float16, enabled=use_gpu):
                 mean, log_var = model(xb)
                 var = log_var.exp()
                 loss = loss_fn(mean, yb, var)
@@ -420,7 +426,8 @@ def retrain_and_upload(model: LibraModel, x_data: List[List[float]], y_data: Lis
             total_points += yb.numel()
         
         # Validation phase
-        model.eval()
+            model = torch.compile(model)
+    model.eval()
         val_loss = 0
         val_correct = 0
         val_total = 0
