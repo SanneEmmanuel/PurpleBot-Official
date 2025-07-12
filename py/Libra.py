@@ -286,8 +286,8 @@ def load_model() -> LibraModel:
 # ========== 🔮 Enhanced Predict Function ==========
 def predict_ticks(model: LibraModel, ticks: List[float]) -> Dict:
     """Predict next 5 ticks with confidence estimation"""
-        model = torch.compile(model)
-    model.eval() # Ensure model is in evaluation mode
+    model = torch.compile(model)
+    model.eval()  # Ensure model is in evaluation mode
     
     # Vectorized conversion to log returns
     returns = convert_to_log_returns(ticks)
