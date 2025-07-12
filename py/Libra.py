@@ -262,6 +262,7 @@ def load_model():
         while attempts < 3:
             try:
                 download_model_from_cloudinary()
+                print("🥂Resuming With Previous Trained Model")
                 break
             except Exception as e:
                 attempts += 1
@@ -279,7 +280,6 @@ def load_model():
     model = LibraModel().to(DEVICE)
     model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
     model.eval()
-    logging.info("✅ Model loaded from disk.")
     return model
 
 # ========== 🔮 Enhanced Predict Function ==========
