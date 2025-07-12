@@ -1,4 +1,4 @@
-#Libra Pro_V5.2 by Sanne Karibo (Optimized)
+#Libra Pro_V5.3 by Sanne Karibo (Optimized)
 import os, requests, zipfile, torch, logging, math, time, numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
@@ -27,19 +27,32 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 # ==========  Vectorized Helper Functions ==========
 def convert_to_log_returns(prices):
-    """Vectorized conversion of price sequence to log returns"""
+    """Branchless vectorized conversion to log returns"""
     prices_arr = np.asarray(prices, dtype=np.float32)
-    returns = np.zeros_like(prices_arr)
-    returns[1:] = np.log(prices_arr[1:] / prices_arr[:-1])
-    return returns
+    shifted = np.roll(prices_arr, 1)
+    ratio = np.divide(prices_arr, shifted, out=np.ones_like(prices_arr), where=(shifted!=0)&(prices_arr!=0))
+    return np.log(ratio, out=np.zeros_like(prices_arr), where=(ratio>0))
 
 def convert_to_future_returns(input_prices, output_prices):
-    """Vectorized conversion to future log returns"""
+    """Branchless vectorized future log returns"""
     input_arr = np.asarray(input_prices, dtype=np.float32)
     output_arr = np.asarray(output_prices, dtype=np.float32)
-    returns = np.zeros(len(output_arr), dtype=np.float32)
-    returns[0] = np.log(output_arr[0] / input_arr[-1])
-    returns[1:] = np.log(output_arr[1:] / output_arr[:-1])
+    
+    # First return (output[0] / input[-1])
+    initial_ratio = np.divide(output_arr[0], input_arr[-1], 
+                             out=np.ones(1), where=(input_arr[-1]!=0))
+    initial_return = np.log(initial_ratio, out=np.zeros(1))
+    
+    # Subsequent returns (output[1:] / output[:-1])
+    shifted_out = np.roll(output_arr, 1)
+    ratio = np.divide(output_arr, shifted_out, out=np.ones_like(output_arr), 
+                    where=(shifted_out!=0)&(output_arr!=0))
+    subsequent_returns = np.log(ratio, out=np.zeros_like(output_arr))
+    
+    # Combine results
+    returns = np.empty_like(output_arr)
+    returns[0] = initial_return
+    returns[1:] = subsequent_returns[1:]
     return returns
 
 def decode_log_returns(last_price, log_returns):
@@ -49,7 +62,7 @@ def decode_log_returns(last_price, log_returns):
 
 # ========== 🧠 Enhanced Model Definition ==========
 class TemporalDecayAttention(nn.Module):
-    """Attention with temporal decay weighting"""
+    """Branchless attention with temporal decay"""
     def __init__(self, embed_dim, num_heads, decay_factor=0.95):
         super().__init__()
         self.embed_dim = embed_dim
@@ -62,20 +75,13 @@ class TemporalDecayAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         
-        # Precompute decay matrix during initialization
-        self.register_buffer('decay_mask', None, persistent=False)
-        
-    def precompute_decay_mask(self, seq_len):
-        time_diffs = torch.abs(torch.arange(seq_len).unsqueeze(1) - torch.arange(seq_len).unsqueeze(0))
-        decay_mask = self.decay_factor ** time_diffs
-        return decay_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
-        
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
         
-        # Precompute decay mask if not done or size changed
-        if self.decay_mask is None or self.decay_mask.size(2) != seq_len:
-            self.decay_mask = self.precompute_decay_mask(seq_len).to(x.device)
+        # Dynamic decay mask generation (branchless)
+        indices = torch.arange(seq_len, device=x.device)
+        time_diffs = torch.abs(indices.view(1, -1) - indices.view(-1, 1))
+        decay_mask = (self.decay_factor ** time_diffs).unsqueeze(0).unsqueeze(0)
         
         # Project inputs
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -85,10 +91,10 @@ class TemporalDecayAttention(nn.Module):
         # Compute attention scores
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         
-        # Apply precomputed decay mask
-        attn_scores = attn_scores * self.decay_mask
+        # Apply decay mask
+        attn_scores = attn_scores * decay_mask
         
-        # Apply softmax and get weighted values
+        # Get weighted values
         attn_probs = F.softmax(attn_scores, dim=-1)
         attn_output = torch.matmul(attn_probs, v)
         
@@ -108,10 +114,8 @@ class PEFTAdapter(nn.Module):
             param.requires_grad = False
         
         # Add low-rank adapters
-        in_features = layer.in_features
-        out_features = layer.out_features
-        self.lora_A = nn.Parameter(torch.randn(in_features, rank))
-        self.lora_B = nn.Parameter(torch.zeros(rank, out_features))
+        self.lora_A = nn.Parameter(torch.randn(layer.in_features, rank))
+        self.lora_B = nn.Parameter(torch.zeros(rank, layer.out_features))
         
     def forward(self, x):
         base_output = self.layer(x)
@@ -129,25 +133,24 @@ class LibraModel(nn.Module):
             hidden_size=hidden_size,
             num_layers=lstm_layers,
             dropout=dropout,
-            batch_first=True,
-            device=DEVICE  # Initialize directly on target device
-        )
+            batch_first=True
+        ).to(DEVICE)  # Direct device placement
         
         # Temporal Decay Attention
         self.attn = TemporalDecayAttention(
             embed_dim=hidden_size,
             num_heads=attn_heads,
             decay_factor=0.95
-        )
+        ).to(DEVICE)
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
         
         # Main prediction layer (mean)
-        self.fc_mean = nn.Linear(hidden_size, 5)
+        self.fc_mean = nn.Linear(hidden_size, 5).to(DEVICE)
         
         # Confidence estimation layer (log variance)
-        self.fc_var = nn.Linear(hidden_size, 5)
+        self.fc_var = nn.Linear(hidden_size, 5).to(DEVICE)
         
         logging.info(f"✅ LSTM: input_size={input_size}, hidden_size={hidden_size}, layers={lstm_layers}")
         logging.info(f"✅ TemporalDecayAttention: embed_dim={hidden_size}, heads={attn_heads}")
@@ -155,13 +158,12 @@ class LibraModel(nn.Module):
 
     def enable_peft(self, rank=8):
         if rank <= 0:
-           logging.info("⚠️ PEFT rank is 0 or less. Skipping PEFT setup.")
-           return self
+            logging.info("⚠️ PEFT rank is 0 or less. Skipping PEFT setup.")
+            return self
         logging.info("🔧 Enabling PEFT adapters")
-        self.fc_mean = PEFTAdapter(self.fc_mean, rank)
-        self.fc_var = PEFTAdapter(self.fc_var, rank)
+        self.fc_mean = PEFTAdapter(self.fc_mean, rank).to(DEVICE)
+        self.fc_var = PEFTAdapter(self.fc_var, rank).to(DEVICE)
         return self
-
 
     def forward(self, x):
         # LSTM processing
@@ -177,12 +179,11 @@ class LibraModel(nn.Module):
         mean = self.fc_mean(context)
         log_var = self.fc_var(context)
         
-        # Return both predictions and uncertainty
         return mean, log_var
 
 # ========== ⬇️⬆️ Upload/Download Helpers ==========
 def upload_model_with_retry(max_attempts=3):
-    """Upload model to Cloudinary with retry mechanism using Cloudinary SDK"""
+    """Upload model to Cloudinary with retry mechanism"""
     logging.info("📦 Zipping model for upload...")
     with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(MODEL_PATH, arcname="model.pt")
@@ -208,18 +209,16 @@ def upload_model_with_retry(max_attempts=3):
             return True
         except Exception as e:
             wait_time = 2 ** attempt
-            if attempt < max_attempts - 1:
-                logging.warning(f"⚠️ Upload failed (attempt {attempt+1}): {str(e)}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"❌ Upload failed after {max_attempts} attempts: {str(e)}")
-                return False
-
+            logging.warning(f"⚠️ Upload failed (attempt {attempt+1}): {str(e)}. Retrying in {wait_time}s...")
+            time.sleep(wait_time)
+    
+    logging.error(f"❌ Upload failed after {max_attempts} attempts")
+    return False
 
 def download_model_from_cloudinary():
-    """Download model from Cloudinary using signed URL and extract it"""
+    """Download model from Cloudinary using signed URL"""
     logging.info("📥 Downloading model ZIP from Cloudinary...")
-
+    
     # Configure Cloudinary
     cloudinary.config(
         cloud_name=CLOUD_NAME,
@@ -230,7 +229,7 @@ def download_model_from_cloudinary():
 
     try:
         # Generate signed URL
-        url, options = cloudinary.utils.cloudinary_url(
+        url, _ = cloudinary.utils.cloudinary_url(
             "model.pt.zip",
             resource_type='raw',
             type='upload',
@@ -254,11 +253,9 @@ def download_model_from_cloudinary():
         logging.error(f"❌ Download failed: {e}")
         raise
 
-
 # ========== 🚀 Load Model ==========
 def load_model():
-    """Load model with retry and fallback to new model"""
-    # Try to download if local model doesn't exist
+    """Load model with retry and fallback"""
     if not os.path.exists(MODEL_PATH):
         for attempt in range(3):
             try:
@@ -309,7 +306,7 @@ def predict_ticks(model, ticks):
     ci_low_prices = decode_log_returns(last_price, ci_low)
     ci_high_prices = decode_log_returns(last_price, ci_high)
     
-    # Calculate confidence scores (1 - coefficient of variation)
+    # Calculate confidence scores
     confidence = 1 / (1 + std)
     
     logging.info(f"📈 Predicted prices: {predicted_prices}")
@@ -324,7 +321,7 @@ def predict_ticks(model, ticks):
 
 # ========== 🔁 Enhanced Training Function ==========
 def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8):
-    """Enhanced training with early stopping, metrics, and sparse checkpointing"""
+    """Enhanced training with early stopping and metrics"""
     # Preallocate arrays for vectorized processing
     num_samples = len(x_data)
     x_returns = np.zeros((num_samples, 300), dtype=np.float32)
@@ -341,34 +338,44 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     y_train, y_val = y_returns[:split_idx], y_returns[split_idx:]
     
     # Convert to tensors
-    x_train_t = torch.tensor(x_train, dtype=torch.float32).unsqueeze(-1)
-    y_train_t = torch.tensor(y_train, dtype=torch.float32)
-    x_val_t = torch.tensor(x_val, dtype=torch.float32).unsqueeze(-1)
-    y_val_t = torch.tensor(y_val, dtype=torch.float32)
+    x_train_t = torch.tensor(x_train, dtype=torch.float32).unsqueeze(-1).to(DEVICE)
+    y_train_t = torch.tensor(y_train, dtype=torch.float32).to(DEVICE)
+    x_val_t = torch.tensor(x_val, dtype=torch.float32).unsqueeze(-1).to(DEVICE)
+    y_val_t = torch.tensor(y_val, dtype=torch.float32).to(DEVICE)
     
     # Create datasets
     train_dataset = TensorDataset(x_train_t, y_train_t)
     val_dataset = TensorDataset(x_val_t, y_val_t)
     
-    # Create dataloaders with persistent workers
-    
+    # Create dataloaders with optimized settings
     use_gpu = torch.cuda.is_available()
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, pin_memory=use_gpu, num_workers=2 if use_gpu else 0, persistent_workers=use_gpu)
-    val_loader = DataLoader(val_dataset, batch_size=32, pin_memory=use_gpu, num_workers=2 if use_gpu else 0, persistent_workers=use_gpu)
-    = DataLoader(train_dataset, batch_size=32, shuffle=True, 
-                              pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(val_dataset, batch_size=32, 
-                            pin_memory=True, persistent_workers=True)
+    num_workers = 4 if use_gpu else 0
+    persistent = use_gpu and num_workers > 0
+    
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=32, 
+        shuffle=True,
+        pin_memory=use_gpu,
+        num_workers=num_workers,
+        persistent_workers=persistent
+    )
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=32,
+        pin_memory=use_gpu,
+        num_workers=num_workers,
+        persistent_workers=persistent
+    )
     
     # Enable PEFT
     if peft_rank > 0:
         model = model.enable_peft(peft_rank)
-    model.train().to(DEVICE)
+    model.train()
     
     # Loss function (Gaussian NLL)
-    def loss_fn(mean, log_var, target):
-        var = torch.exp(log_var)
-        return 0.5 * (log_var + ((target - mean) ** 2) / var).mean()
+    loss_fn = F.gaussian_nll_loss
     
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=2, factor=0.5)
@@ -376,7 +383,7 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     # Training variables
     best_val_loss = float('inf')
     epochs_no_improve = 0
-    training_history = []
+    scaler = torch.cuda.amp.GradScaler(enabled=use_gpu)
     
     # Training loop
     for epoch in range(epochs):
@@ -389,17 +396,18 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
         for xb, yb in train_loader:
             xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            mean, log_var = model(xb)
             
-            # Calculate loss and backpropagate
-            loss = loss_fn(mean, log_var, yb)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast(enabled=use_gpu):
+                mean, log_var = model(xb)
+                var = log_var.exp()
+                loss = loss_fn(mean, yb, var)
+            
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
             # Metrics
             train_loss += loss.item() * xb.size(0)
-            
-            # Directional accuracy
             pred_direction = torch.sign(mean)
             true_direction = torch.sign(yb)
             correct_direction += (pred_direction == true_direction).sum().item()
@@ -415,7 +423,8 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
             for xb, yb in val_loader:
                 xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
                 mean, log_var = model(xb)
-                val_loss += loss_fn(mean, log_var, yb).item() * xb.size(0)
+                var = log_var.exp()
+                val_loss += loss_fn(mean, yb, var).item() * xb.size(0)
                 
                 # Directional accuracy
                 pred_direction = torch.sign(mean)
@@ -441,17 +450,12 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             epochs_no_improve = 0
-            
-            # Save sparse checkpoint (every 5 improvements)
-            if epoch % 5 == 0:
-                checkpoint_path = os.path.join(CHECKPOINT_DIR, f"model_epoch_{epoch+1}.pt")
-                torch.save(model.state_dict(), checkpoint_path)
-                logging.info(f"💾 Saved checkpoint: {checkpoint_path}")
+            checkpoint_path = os.path.join(CHECKPOINT_DIR, f"model_epoch_{epoch+1}.pt")
+            torch.save(model.state_dict(), checkpoint_path)
+            logging.info(f"💾 Saved checkpoint: {checkpoint_path}")
         else:
             epochs_no_improve += 1
             logging.info(f"⏳ No improvement: {epochs_no_improve}/{patience}")
-            
-            # Early stopping check
             if epochs_no_improve >= patience:
                 logging.info(f"🛑 Early stopping at epoch {epoch+1}")
                 break
@@ -459,10 +463,8 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     # Save best model
     final_model_path = os.path.join(CHECKPOINT_DIR, "best_model.pt")
     torch.save(model.state_dict(), final_model_path)
-    logging.info(f"🏆 Best model saved: {final_model_path}")
-    
-    # Copy to main model path
     torch.save(model.state_dict(), MODEL_PATH)
+    logging.info(f"🏆 Best model saved: {final_model_path}")
     
     # Upload to cloud
     if upload_model_with_retry():
