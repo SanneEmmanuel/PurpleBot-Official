@@ -56,6 +56,6 @@ async def predict():
     predicted = predict_ticks(model, history)
     print("Prediction Ran Successfully\n::",predicted)
     # Step 3: Start background task for collecting actual + retraining
-    asyncio.create_task(post_prediction_learn(predicted))
+    asyncio.create_task(post_prediction_learn(predicted['prices']))
     # Step 4: Return predicted values immediately
     return { "predicted": predicted }
