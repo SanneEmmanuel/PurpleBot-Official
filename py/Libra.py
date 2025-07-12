@@ -1,10 +1,9 @@
-#Libra Pro_V5 by Sanne Karibo
+#Libra Pro_V5.2 by Sanne Karibo (Optimized)
 import os, requests, zipfile, torch, logging, math, time, numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from io import BytesIO
 from torch.utils.data import DataLoader, TensorDataset
-from collections import deque
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
@@ -26,30 +25,27 @@ logging.info(f"🔌 Using device: {DEVICE}")
 # Create checkpoint directory
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
-# ==========  Helper Functions ==========
+# ==========  Vectorized Helper Functions ==========
 def convert_to_log_returns(prices):
-    """Convert price sequence to log returns with initial zero"""
-    returns = [0.0]  # Initial zero return
-    for i in range(1, len(prices)):
-        returns.append(math.log(prices[i] / prices[i-1]))
+    """Vectorized conversion of price sequence to log returns"""
+    prices_arr = np.asarray(prices, dtype=np.float32)
+    returns = np.zeros_like(prices_arr)
+    returns[1:] = np.log(prices_arr[1:] / prices_arr[:-1])
     return returns
 
 def convert_to_future_returns(input_prices, output_prices):
-    """Convert input/output prices to future log returns"""
-    returns = []
-    # First return connects input to output
-    returns.append(math.log(output_prices[0] / input_prices[-1]))
-    # Subsequent returns between output prices
-    for i in range(1, len(output_prices)):
-        returns.append(math.log(output_prices[i] / output_prices[i-1]))
+    """Vectorized conversion to future log returns"""
+    input_arr = np.asarray(input_prices, dtype=np.float32)
+    output_arr = np.asarray(output_prices, dtype=np.float32)
+    returns = np.zeros(len(output_arr), dtype=np.float32)
+    returns[0] = np.log(output_arr[0] / input_arr[-1])
+    returns[1:] = np.log(output_arr[1:] / output_arr[:-1])
     return returns
 
 def decode_log_returns(last_price, log_returns):
-    """Convert log returns back to price predictions"""
-    prices = [last_price]
-    for r in log_returns:
-        prices.append(prices[-1] * math.exp(r))
-    return prices[1:]  # Return only future prices
+    """Vectorized conversion of log returns to price predictions"""
+    cum_returns = np.cumsum(log_returns)
+    return (last_price * np.exp(cum_returns)).astype(np.float32).tolist()
 
 # ========== 🧠 Enhanced Model Definition ==========
 class TemporalDecayAttention(nn.Module):
@@ -66,8 +62,20 @@ class TemporalDecayAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, embed_dim)
         self.out_proj = nn.Linear(embed_dim, embed_dim)
         
+        # Precompute decay matrix during initialization
+        self.register_buffer('decay_mask', None, persistent=False)
+        
+    def precompute_decay_mask(self, seq_len):
+        time_diffs = torch.abs(torch.arange(seq_len).unsqueeze(1) - torch.arange(seq_len).unsqueeze(0))
+        decay_mask = self.decay_factor ** time_diffs
+        return decay_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        
     def forward(self, x):
         batch_size, seq_len, _ = x.shape
+        
+        # Precompute decay mask if not done or size changed
+        if self.decay_mask is None or self.decay_mask.size(2) != seq_len:
+            self.decay_mask = self.precompute_decay_mask(seq_len).to(x.device)
         
         # Project inputs
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
@@ -77,13 +85,8 @@ class TemporalDecayAttention(nn.Module):
         # Compute attention scores
         attn_scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         
-        # Create temporal decay mask
-        time_diffs = torch.abs(torch.arange(seq_len).unsqueeze(1) - torch.arange(seq_len).unsqueeze(0))
-        decay_mask = self.decay_factor ** time_diffs
-        decay_mask = decay_mask.to(DEVICE).unsqueeze(0).unsqueeze(0)
-        
-        # Apply decay mask to attention scores
-        attn_scores = attn_scores * decay_mask
+        # Apply precomputed decay mask
+        attn_scores = attn_scores * self.decay_mask
         
         # Apply softmax and get weighted values
         attn_probs = F.softmax(attn_scores, dim=-1)
@@ -126,7 +129,8 @@ class LibraModel(nn.Module):
             hidden_size=hidden_size,
             num_layers=lstm_layers,
             dropout=dropout,
-            batch_first=True
+            batch_first=True,
+            device=DEVICE  # Initialize directly on target device
         )
         
         # Temporal Decay Attention
@@ -180,10 +184,10 @@ class LibraModel(nn.Module):
 def upload_model_with_retry(max_attempts=3):
     """Upload model to Cloudinary with retry mechanism using Cloudinary SDK"""
     logging.info("📦 Zipping model for upload...")
-    with zipfile.ZipFile(ZIP_PATH, 'w') as zipf:
+    with zipfile.ZipFile(ZIP_PATH, 'w', zipfile.ZIP_DEFLATED) as zipf:
         zipf.write(MODEL_PATH, arcname="model.pt")
 
-    # Configure Cloudinary if not already set
+    # Configure Cloudinary
     cloudinary.config(
         cloud_name=CLOUD_NAME,
         api_key=API_KEY,
@@ -191,8 +195,7 @@ def upload_model_with_retry(max_attempts=3):
         secure=True
     )
 
-    attempts = 0
-    while attempts < max_attempts:
+    for attempt in range(max_attempts):
         try:
             result = cloudinary.uploader.upload(
                 ZIP_PATH,
@@ -204,10 +207,9 @@ def upload_model_with_retry(max_attempts=3):
             logging.info(f"✅ Upload successful: {result.get('secure_url')}")
             return True
         except Exception as e:
-            attempts += 1
-            if attempts < max_attempts:
-                wait_time = 2 ** attempts
-                logging.warning(f"⚠️ Upload failed (attempt {attempts}): {str(e)}. Retrying in {wait_time}s...")
+            wait_time = 2 ** attempt
+            if attempt < max_attempts - 1:
+                logging.warning(f"⚠️ Upload failed (attempt {attempt+1}): {str(e)}. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
                 logging.error(f"❌ Upload failed after {max_attempts} attempts: {str(e)}")
@@ -218,7 +220,7 @@ def download_model_from_cloudinary():
     """Download model from Cloudinary using signed URL and extract it"""
     logging.info("📥 Downloading model ZIP from Cloudinary...")
 
-    # Ensure Cloudinary is configured
+    # Configure Cloudinary
     cloudinary.config(
         cloud_name=CLOUD_NAME,
         api_key=API_KEY,
@@ -227,7 +229,7 @@ def download_model_from_cloudinary():
     )
 
     try:
-        # Generate signed URL valid for 10 minutes
+        # Generate signed URL
         url, options = cloudinary.utils.cloudinary_url(
             "model.pt.zip",
             resource_type='raw',
@@ -236,15 +238,15 @@ def download_model_from_cloudinary():
             expires_at=int(time.time()) + 600
         )
 
-        response = requests.get(url)
-        if response.status_code != 200:
-            raise RuntimeError(f"Failed to download model: HTTP {response.status_code}")
-
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        
         with open(ZIP_PATH, "wb") as f:
-            f.write(response.content)
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
         logging.info(f"✅ ZIP saved to {ZIP_PATH}")
 
-        # Extract contents to /tmp
+        # Extract contents
         with zipfile.ZipFile(ZIP_PATH, 'r') as zip_ref:
             zip_ref.extractall("/tmp")
         logging.info("✅ Model extracted to /tmp")
@@ -258,24 +260,23 @@ def load_model():
     """Load model with retry and fallback to new model"""
     # Try to download if local model doesn't exist
     if not os.path.exists(MODEL_PATH):
-        attempts = 0
-        while attempts < 3:
+        for attempt in range(3):
             try:
                 download_model_from_cloudinary()
-                print("🥂Resuming With Previous Trained Model")
+                print("🥂 Resuming With Previous Trained Model")
                 break
             except Exception as e:
-                attempts += 1
-                if attempts == 3:
+                if attempt == 2:
                     logging.error("❌ Download failed 3 times. Creating fresh model...")
                     model = LibraModel().to(DEVICE)
                     torch.save(model.state_dict(), MODEL_PATH)
-                    print("😔saved New Model")
+                    print("😔 Saved New Model")
                     if upload_model_with_retry():
                         logging.info("🆕 Fresh model uploaded to Cloudinary")
                     return model
-                logging.warning(f"⚠️ Download failed (attempt {attempts}): {str(e)}. Retrying...")
-                time.sleep(2 ** attempts)
+                wait_time = 2 ** attempt
+                logging.warning(f"⚠️ Download failed (attempt {attempt+1}): {str(e)}. Retrying in {wait_time}s...")
+                time.sleep(wait_time)
 
     # Load existing model
     model = LibraModel().to(DEVICE)
@@ -286,7 +287,7 @@ def load_model():
 # ========== 🔮 Enhanced Predict Function ==========
 def predict_ticks(model, ticks):
     """Predict next 5 ticks with confidence estimation"""
-    # Convert prices to log returns
+    # Vectorized conversion to log returns
     returns = convert_to_log_returns(ticks)
     x = torch.tensor(returns, dtype=torch.float32).view(1, 300, 1).to(DEVICE)
     
@@ -302,7 +303,7 @@ def predict_ticks(model, ticks):
     ci_low = mean - 1.96 * std
     ci_high = mean + 1.96 * std
     
-    # Decode log returns to price predictions
+    # Vectorized decoding
     last_price = ticks[-1]
     predicted_prices = decode_log_returns(last_price, mean)
     ci_low_prices = decode_log_returns(last_price, ci_low)
@@ -324,16 +325,18 @@ def predict_ticks(model, ticks):
 # ========== 🔁 Enhanced Training Function ==========
 def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8):
     """Enhanced training with early stopping, metrics, and sparse checkpointing"""
-    # Prepare data
-    logging.info("🔄 Converting data to log returns...")
-    x_returns, y_returns = [], []
+    # Preallocate arrays for vectorized processing
+    num_samples = len(x_data)
+    x_returns = np.zeros((num_samples, 300), dtype=np.float32)
+    y_returns = np.zeros((num_samples, 5), dtype=np.float32)
     
-    for i in range(len(x_data)):
-        x_returns.append(convert_to_log_returns(x_data[i]))
-        y_returns.append(convert_to_future_returns(x_data[i], y_data[i]))
+    # Vectorized data conversion
+    for i in range(num_samples):
+        x_returns[i] = convert_to_log_returns(x_data[i])
+        y_returns[i] = convert_to_future_returns(x_data[i], y_data[i])
     
     # Split into train and validation (80/20)
-    split_idx = int(0.8 * len(x_returns))
+    split_idx = int(0.8 * num_samples)
     x_train, x_val = x_returns[:split_idx], x_returns[split_idx:]
     y_train, y_val = y_returns[:split_idx], y_returns[split_idx:]
     
@@ -347,9 +350,11 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     train_dataset = TensorDataset(x_train_t, y_train_t)
     val_dataset = TensorDataset(x_val_t, y_val_t)
     
-    # Create dataloaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=32)
+    # Create dataloaders with persistent workers
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, 
+                              pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, 
+                            pin_memory=True, persistent_workers=True)
     
     # Enable PEFT
     if peft_rank > 0:
@@ -378,8 +383,8 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
         total = 0
         
         for xb, yb in train_loader:
-            xb, yb = xb.to(DEVICE), yb.to(DEVICE)
-            optimizer.zero_grad()
+            xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
+            optimizer.zero_grad(set_to_none=True)
             mean, log_var = model(xb)
             
             # Calculate loss and backpropagate
@@ -404,7 +409,7 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
         
         with torch.no_grad():
             for xb, yb in val_loader:
-                xb, yb = xb.to(DEVICE), yb.to(DEVICE)
+                xb, yb = xb.to(DEVICE, non_blocking=True), yb.to(DEVICE, non_blocking=True)
                 mean, log_var = model(xb)
                 val_loss += loss_fn(mean, log_var, yb).item() * xb.size(0)
                 
