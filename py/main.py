@@ -38,15 +38,18 @@ async def getTicks(count=300):
 
 # 🔧 Background task for listening and retraining
 async def post_prediction_learn(predicted):
-    await asyncio.sleep(5)  # Wait 5 seconds
-    ticks = await getTicks(305)  # Get 305 ticks
-    actual = ticks[:5]           # First 5 are the actual next ticks
-    history = ticks[5:]          # Remaining 300 are the history
+    try:
+        await asyncio.sleep(5)  # Wait 5 seconds
+        ticks = await getTicks(305)  # Get 305 ticks
+        actual = ticks[:5]           # First 5 are the actual next ticks
+        history = ticks[5:]          # Remaining 300 are the history
 
-    print("📈 Predicted:", predicted)
-    print("📊 Actual   :", actual)
-    print("🔍 Difference:", [round(a - p, 5) for a, p in zip(actual, predicted)])
-    retrain_and_upload(model, [history], [actual])
+        print("📈 Predicted:", predicted)
+        print("📊 Actual   :", actual)
+        print("🔍 Difference:", [round(a - p, 5) for a, p in zip(actual, predicted)])
+        retrain_and_upload(model, [history], [actual])
+    except Exception as e:
+        print(f"❌ Error in post_prediction_learn: {e}")
 
 @app.post("/predict")
 async def predict():
