@@ -351,7 +351,11 @@ def retrain_and_upload(model, x_data, y_data, epochs=50, patience=5, peft_rank=8
     val_dataset = TensorDataset(x_val_t, y_val_t)
     
     # Create dataloaders with persistent workers
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, 
+    
+    use_gpu = torch.cuda.is_available()
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, pin_memory=use_gpu, num_workers=2 if use_gpu else 0, persistent_workers=use_gpu)
+    val_loader = DataLoader(val_dataset, batch_size=32, pin_memory=use_gpu, num_workers=2 if use_gpu else 0, persistent_workers=use_gpu)
+    = DataLoader(train_dataset, batch_size=32, shuffle=True, 
                               pin_memory=True, persistent_workers=True)
     val_loader = DataLoader(val_dataset, batch_size=32, 
                             pin_memory=True, persistent_workers=True)
