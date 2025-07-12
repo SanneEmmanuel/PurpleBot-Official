@@ -1,4 +1,5 @@
 
+
 # @title Training on Collab by Sanne Karibo\n 🔁 Upload Model, Install Dependencies & Train
 from google.colab import files
 import os, asyncio, json
@@ -20,7 +21,7 @@ else:
 print(f"✅ Uploaded: {model_filename}")
 
 # ✅ Install all required dependencies quietly
-!pip install websockets nest_asyncio torch numpy requests cloudinary --quiet
+!pip install websockets nest_asyncio torch numpy==1.26.4 requests cloudinary --quiet
 
 # === 🧠 Load model file dynamically ===
 spec = importlib.util.spec_from_file_location("libra_module", model_filename)
