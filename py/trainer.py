@@ -61,7 +61,7 @@ for i in range(len(tick_data) - window - output):
 print(f"🧪 Prepared {len(X)} samples.")
 
 # === 🔧 Train model ===
-model = libra.LibraModel()
+model = libra.load_model()
 trained = libra.retrain_and_upload(model, X, Y, epochs=100, peft_rank=0)
 
 print("✅ Training complete::",trained)
