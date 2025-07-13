@@ -12,7 +12,7 @@ httpx==0.27.0
 torch==2.5.0
 numpy==1.26.4
 cython==3.0.10
-cupy==13.1.0  # CPU fallback (Render doesn't support CUDA)
+#cupy==13.1.0  CPU fallback (Render doesn't support CUDA)
 
 
 # ========================
