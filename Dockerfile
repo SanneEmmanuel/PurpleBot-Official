@@ -14,8 +14,10 @@ RUN apt-get update && \
         pkg-config \
         libssl-dev \
         libffi-dev \
+        python3-dev \
         rustc \
-        cargo && \
+        cargo \
+        wget && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
