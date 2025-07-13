@@ -291,7 +291,7 @@ def load_model() -> LibraModel:
 
     # Load existing model
     model = LibraModel().to(DEVICE)
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True)), map_location=DEVICE))
     model = torch.compile(model)
     model.eval()
     return model
