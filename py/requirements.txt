@@ -9,9 +9,11 @@ httpx==0.27.0
 # ========================
 # PyTorch and Math (Optimized)
 # ========================
-torch==2.4.0
-jax==0.4.25
-jaxlib==0.4.25  #+cuda11.cudnn86  ⚠️ GPU-enabled version, adjust for your CUDA version if needed
+torch==2.5.0
+numpy==1.26.4
+cython==3.0.10
+cupy==13.1.0  # CPU fallback (Render doesn't support CUDA)
+
 
 # ========================
 # WebSocket + Async
@@ -35,6 +37,6 @@ loguru==0.7.2
 cloudinary==1.39.1
 
 # ========================
-# Other (Requests for HTTP)
+# HTTP Utilities
 # ========================
 requests==2.31.0
