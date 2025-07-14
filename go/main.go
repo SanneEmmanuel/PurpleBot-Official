@@ -39,7 +39,7 @@ var (
 	predictionMutex sync.Mutex
 	confidenceThreshold = 0.88
 	libraURL           = os.Getenv("LIBRA_URL") // Example: use ENV for Libra backend
-	derivWSURL         = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+	derivWSURL         = "wss://ws.derivws.com/websockets/v3?app_id=85077"
 )
 
 func main() {
