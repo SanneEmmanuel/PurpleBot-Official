@@ -69,12 +69,11 @@ async def getTicks(count=300):
 async def post_prediction_learn(predicted):
     try:
         print("✅ Prediction Success ::", predicted)
-
-        model = load_model()  # ⏱️ Load model early to parallelize waiting
         await asyncio.sleep(5)
 
         ticks = await getTicks(305)
         actual, history = ticks[:5], ticks[5:]
+        print(f"✔️Actual Prices:=={actual}")
 
         pred, act = np.array(predicted, dtype=np.float32), np.array(actual, dtype=np.float32)
         diffs = np.abs(act - pred)
@@ -82,7 +81,7 @@ async def post_prediction_learn(predicted):
 
         print("📉 Error:", np.round(diffs, 2).tolist(), "| Avg:", round(float(avg), 3))
 
-        epochs = int(np.clip((avg / 0.2) * 10, 1, 10)) * int(avg >= 0.1)
+        epochs = int(np.clip((avg / 0.2) * 10, 1, 10)) * int(avg >= 0.5)
         print("🔁 Retrain:", f"{epochs} epoch(s)" if epochs else "No retraining")
 
         if epochs and len(history) >= 300:
