@@ -1,7 +1,8 @@
 
+
 # @title Training on Collab by Sanne Karibo\n 🔁 Upload Model, Install Dependencies & Train
 from google.colab import files
-import os, asyncio, json
+import os, asyncio, json,time
 import importlib.util
 import logging
 logging.basicConfig(level=logging.INFO, format="🔧 %(message)s")
@@ -20,7 +21,7 @@ else:
 print(f"✅ Uploaded: {model_filename}")
 
 # ✅ Install all required dependencies quietly
-!pip install websockets nest_asyncio torch numpy==1.26.4 requests cloudinary --quiet
+!pip install -q torch numpy requests cloudinary
 
 # === 🧠 Load model file dynamically ===
 spec = importlib.util.spec_from_file_location("libra_module", model_filename)
@@ -33,22 +34,42 @@ nest_asyncio.apply()
 import websockets
 
 # === 🌐 Define async WebSocket getTicks() ===
-async def getTicks(count=300):
+async def getTicks(count = 300):
+    ticks = []
+    remaining = count
+    end_time = "latest"
     uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+
     async with websockets.connect(uri) as ws:
-        await ws.send(json.dumps({
-            "ticks_history": "stpRNG",
-            "count": count,
-            "end": "latest",
-            "style": "ticks"
-        }))
-        response = json.loads(await ws.recv())
-        prices = response["history"]["prices"]
-        print("📨 Received", len(prices), "ticks.")
-        return prices
+        while remaining > 0:
+            await ws.send(json.dumps({
+                "ticks_history": "stpRNG",
+                "count": min(remaining, 5000),
+                "end": end_time,
+                "style": "ticks"
+            }))
+            res = json.loads(await ws.recv())
+
+            if "error" in res:
+                raise RuntimeError("❌ API Error:", res["error"]["message"])
+            prices = res.get("history", {}).get("prices", [])
+            if not prices:
+                break
+
+            ticks = prices + ticks
+            remaining -= len(prices)
+            end_time = res["history"]["times"][-1]
+            await asyncio.sleep(0.1)
+
+    if not ticks:
+        raise ValueError("❌ getTicks() returned 0 ticks.")
+
+    return ticks[-count:]
+
 
 # === 🔃 Fetch ticks ===
-tick_data = asyncio.run(getTicks(600))
+tick_data = asyncio.run(getTicks(89600))
+print(f"✊received {len(tick_data)}ticks to Ram✔️")
 
 # === 🧹 Prepare (X, Y) data for training ===
 X, Y = [], []
