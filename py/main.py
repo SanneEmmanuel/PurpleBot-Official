@@ -4,7 +4,6 @@ import asyncio, websockets, nest_asyncio, json
 from fastapi.middleware.cors import CORSMiddleware
 from collections import deque
 
-nest_asyncio.apply()
 app = FastAPI()
 
 # ✅ CORS
@@ -68,6 +67,7 @@ async def getTicks(count=300):
 # ✅ Background retrain
 async def post_prediction_learn(predicted):
     try:
+        print("Prediction Ran Successfully\n::", predicted)
         await asyncio.sleep(5)
         ticks = await getTicks(305)
         actual = ticks[:5]
@@ -86,7 +86,6 @@ async def predict():
         return { "error": "Model not loaded." }
     history = await getTicks()
     predicted = predict_ticks(model, history)
-    print("Prediction Ran Successfully\n::", predicted)
     asyncio.create_task(post_prediction_learn(predicted['prices']))
     return { "predicted": predicted }
 
