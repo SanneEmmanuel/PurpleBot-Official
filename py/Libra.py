@@ -348,7 +348,7 @@ def load_model() -> LibraModel:
 # ========== 🔮 Enhanced Predict Function ==========
 @torch.no_grad() # Decorator to disable gradient calculations for inference
 @torch.jit.script # Use torch.jit.script for JIT compilation for performance
-def _predict_compiled(model: LibraModel, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def _predict_compiled(model , x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """JIT compiled helper for prediction."""
     return model(x)
 
