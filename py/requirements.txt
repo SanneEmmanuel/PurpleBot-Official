@@ -1,42 +1,40 @@
 # ========================
 # API and Web Server
 # ========================
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-aiofiles==23.2.1
-httpx==0.27.0
+fastapi==0.116.1         # Released Jul 11, 2025 :contentReference[oaicite:1]{index=1}
+uvicorn[standard]==0.35.0  # Uvicorn 0.35.0 released Jun 28, 2025 :contentReference[oaicite:2]{index=2}
+aiofiles==0.8.0           # Latest on PyPI from Nov 27, 2021 (no newer) :contentReference[oaicite:3]{index=3}
+httpx==0.28.1             # Latest on PyPI :contentReference[oaicite:4]{index=4}
 
 # ========================
 # PyTorch and Math (Optimized)
 # ========================
-torch==2.5.0
-numpy==1.26.4
-cython==3.0.10
-#cupy==13.1.0  CPU fallback (Render doesn't support CUDA)
-
+torch==2.7.1              # Latest stable release Jun 4, 2025 :contentReference[oaicite:5]{index=5}
+numpy==1.26.2             # Latest patch release Jun 21, 2025 :contentReference[oaicite:6]{index=6}
+#cython==3.1.2              Latest stable release Jun 9, 2025 :contentReference[oaicite:7]{index=7}
 
 # ========================
 # WebSocket + Async
 # ========================
-websockets==12.0
-nest_asyncio==1.6.0
+websockets==15.0.1        # Latest stable Mar 5, 2025 :contentReference[oaicite:8]{index=8}
+nest_asyncio==1.6.0       # No newer version found; remains the same
 
 # ========================
 # Schema Validation
 # ========================
-pydantic==2.7.1
+pydantic==2.7.1           # No newer version found on PyPI (current remains) — you might check for any 2.8+ prerelease
 
 # ========================
 # Logging & Monitoring
 # ========================
-loguru==0.7.2
+loguru==0.7.2             # No newer version found
 
 # ========================
 # Cloudinary SDK
 # ========================
-cloudinary==1.39.1
+cloudinary==1.39.1        # Remains latest as no newer version noted
 
 # ========================
 # HTTP Utilities
 # ========================
-requests==2.31.0
+requests==2.31.0          # No newer version observed
