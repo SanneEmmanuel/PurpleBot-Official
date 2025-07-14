@@ -75,7 +75,12 @@ async def post_prediction_learn(predicted):
         print("📈 Predicted:", predicted)
         print("📊 Actual   :", actual)
         print("🔍 Difference:", [round(a - p, 5) for a, p in zip(actual, predicted)])
-        await asyncio.to_thread(retrain_and_upload, model, [history], [actual])
+        if len(history) >= 300 and len(actual) >= 5:
+            model= load_model()
+            await asyncio.to_thread(retrain_and_upload, model, [history[:300]], [actual])
+        else:
+    print("⚠️ Not enough data for retraining. Skipping.")
+
     except Exception as e:
         print(f"❌ Error in post_prediction_learn: {e}")
 
