@@ -27,19 +27,23 @@ type User struct {
 }
 
 type Prediction struct {
-	PredictedTicks []float64 `json:"predicted_ticks"`
-	Confidence     float64   `json:"confidence"`
+	Predicted struct {
+		Prices     []float64 `json:"prices"`
+		Confidence []float64 `json:"confidence"`
+		CILow      []float64 `json:"ci_low"`
+		CIHigh     []float64 `json:"ci_high"`
+	} `json:"predicted"`
 }
 
 // Application state
 var (
-	users           = make(map[string]*User)
-	usersMutex      sync.Mutex
-	currentPrediction Prediction
-	predictionMutex sync.Mutex
-	confidenceThreshold = 0.88
-	libraURL           = os.Getenv("LIBRA_URL") // Example: use ENV for Libra backend
-	derivWSURL         = "wss://ws.derivws.com/websockets/v3?app_id=85077"
+	users              = make(map[string]*User)
+	usersMutex         sync.Mutex
+	currentPrediction  Prediction
+	predictionMutex    sync.Mutex
+	confidenceThreshold = 0.88 // You may want to adjust this or make it dynamic based on array values
+	libraURL            = os.Getenv("LIBRA_URL") // Example: use ENV for Libra backend
+	derivWSURL          = "wss://ws.derivws.com/websockets/v3?app_id=85077"
 )
 
 func main() {
@@ -182,14 +186,22 @@ func predictionFetcher() {
 // --- Decision Engine: executeTrade ---
 
 func executeTrade(pred Prediction) {
-	if pred.Confidence < confidenceThreshold {
+	// Use the average confidence from the confidence array to make decisions
+	avgConfidence := 0.0
+	if len(pred.Predicted.Confidence) > 0 {
+		for _, conf := range pred.Predicted.Confidence {
+			avgConfidence += conf
+		}
+		avgConfidence /= float64(len(pred.Predicted.Confidence))
+	}
+	if avgConfidence < confidenceThreshold {
 		return
 	}
-	direction := detectTrend(pred.PredictedTicks)
+	direction := detectTrend(pred.Predicted.Prices)
 	if direction == "HOLD" {
 		return
 	}
-	entryIdx := findBestEntry(pred.PredictedTicks, direction)
+	entryIdx := findBestEntry(pred.Predicted.Prices, direction)
 
 	usersMutex.Lock()
 	for _, user := range users {
@@ -209,16 +221,16 @@ func executeTrade(pred Prediction) {
 
 // --- Trend Detection ---
 
-func detectTrend(ticks []float64) string {
-	if len(ticks) < 2 {
+func detectTrend(prices []float64) string {
+	if len(prices) < 2 {
 		return "HOLD"
 	}
 	up, down := true, true
-	for i := 1; i < len(ticks); i++ {
-		if ticks[i] <= ticks[i-1] {
+	for i := 1; i < len(prices); i++ {
+		if prices[i] <= prices[i-1] {
 			up = false
 		}
-		if ticks[i] >= ticks[i-1] {
+		if prices[i] >= prices[i-1] {
 			down = false
 		}
 	}
@@ -234,25 +246,25 @@ func detectTrend(ticks []float64) string {
 
 // --- Entry Index Finder ---
 
-func findBestEntry(ticks []float64, direction string) int {
-	if len(ticks) == 0 {
+func findBestEntry(prices []float64, direction string) int {
+	if len(prices) == 0 {
 		return 0
 	}
 	bestIdx := 0
 	switch direction {
 	case "BUY":
-		minTick := math.MaxFloat64
-		for i, tick := range ticks {
-			if tick < minTick {
-				minTick = tick
+		minPrice := math.MaxFloat64
+		for i, price := range prices {
+			if price < minPrice {
+				minPrice = price
 				bestIdx = i
 			}
 		}
 	case "SELL":
-		maxTick := -math.MaxFloat64
-		for i, tick := range ticks {
-			if tick > maxTick {
-				maxTick = tick
+		maxPrice := -math.MaxFloat64
+		for i, price := range prices {
+			if price > maxPrice {
+				maxPrice = price
 				bestIdx = i
 			}
 		}
