@@ -1,3 +1,4 @@
+#Libra Version 6.2 by Sanne Karibo
 import os
 import time
 import requests
@@ -20,7 +21,10 @@ class Chomp1d(nn.Module):
         super().__init__()
         self.chomp_size = chomp_size
     def forward(self, x):
-        return x[:, :, :-self.chomp_size] if self.chomp_size > 0 else x
+        # Ensure chomp_size is less than size of x along last dimension
+        if self.chomp_size > 0 and x.size(2) > self.chomp_size:
+            return x[:, :, :-self.chomp_size]
+        return x
 
 class TCNBlock(nn.Module):
     """
@@ -50,10 +54,10 @@ class TCNBlock(nn.Module):
         self.init_weights()
 
     def init_weights(self):
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
+        nn.init.normal_(self.conv1.weight, 0, 0.01)
+        nn.init.normal_(self.conv2.weight, 0, 0.01)
         if self.downsample is not None:
-            self.downsample.weight.data.normal_(0, 0.01)
+            nn.init.normal_(self.downsample.weight, 0, 0.01)
 
     def forward(self, x):
         out = self.net(x)
@@ -81,7 +85,6 @@ class TCN(nn.Module):
         return self.network(x)
 
 # --- Fusion Model ---
-
 class TCNGRUFusion(nn.Module):
     """
     A fusion model combining a TCN and a GRU with an attention mechanism.
@@ -107,7 +110,8 @@ class TCNGRUFusion(nn.Module):
 
     def forward(self, x):
         # x shape: (batch, seq_len, features) -> e.g., (32, 300, 1)
-        
+        if x.dim() != 3:
+            raise ValueError("Input must be 3D tensor (batch, seq_len, features)")
         # TCN branch expects (batch, features, seq_len)
         x_tcn = x.permute(0, 2, 1)
         out_tcn = self.tcn(x_tcn)
@@ -222,7 +226,7 @@ class Libra6:
             inp_tensor = torch.tensor(inp, dtype=torch.float32, device=self.device)
             
             with torch.no_grad():
-                prob = self.model(inp_tensor).item()
+                prob = float(self.model(inp_tensor).item())
                 next_diff = 1 if prob > 0.5 else -1
             
             preds.append(next_diff)
@@ -284,6 +288,9 @@ class Libra6:
             for xb, yb in loader:
                 optimizer.zero_grad()
                 out = self.model(xb).squeeze()
+                # Ensure output size matches yb
+                if out.shape != yb.shape:
+                    out = out.view_as(yb)
                 loss = criterion(out, yb)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
