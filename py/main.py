@@ -1,9 +1,9 @@
 from fastapi import FastAPI
-from Libra import load_model, predict_ticks, retrain_and_upload
-import asyncio, websockets, nest_asyncio, json
 from fastapi.middleware.cors import CORSMiddleware
+import asyncio, websockets, json, numpy as np
 from collections import deque
-import numpy as np
+
+from Libra6 import Libra6  # ✅ Directly import the class
 
 app = FastAPI()
 
@@ -18,6 +18,14 @@ app.add_middleware(
 
 # ✅ Tick buffer (latest 400 ticks)
 tick_buffer = deque(maxlen=400)
+
+# ✅ Load model once globally
+model = Libra6()
+try:
+    model.download_model_from_cloudinary()
+    print("✅ Model loaded from Cloudinary.")
+except Exception as e:
+    print(f"❌ Failed to load model: {e}")
 
 # ✅ Persistent WebSocket listener
 async def websocket_listener():
@@ -66,16 +74,16 @@ async def getTicks(count=300):
     )
 
 # ✅ Background retrain
-async def post_prediction_learn(predicted):
+async def post_prediction_learn(predicted_prices):
     try:
-        print("✅ Prediction Success ::", predicted)
+        print("✅ Prediction Success ::", predicted_prices)
         await asyncio.sleep(5)
 
         ticks = await getTicks(305)
         actual, history = ticks[:5], ticks[5:]
         print(f"✔️Actual Prices:=={actual}")
 
-        pred, act = np.array(predicted, dtype=np.float32), np.array(actual, dtype=np.float32)
+        pred, act = np.array(predicted_prices, dtype=np.float32), np.array(actual, dtype=np.float32)
         diffs = np.abs(act - pred)
         avg = diffs.mean()
 
@@ -85,19 +93,22 @@ async def post_prediction_learn(predicted):
         print("🔁 Retrain:", f"{epochs} epoch(s)" if epochs else "No retraining")
 
         if epochs and len(history) >= 300:
-            await asyncio.to_thread(retrain_and_upload, model, [history[:300]], [actual], epochs)
+            await asyncio.to_thread(model.continuous_train, [history[:301]], epochs)
 
+            # Re-upload updated model
+            model.upload_model_to_cloudinary()
     except Exception as e:
         print("❌ post_prediction_learn error:", e)
-
 
 # ✅ Prediction endpoint
 @app.post("/predict")
 async def predict():
     if model is None:
         return { "error": "Model not loaded." }
+
     history = await getTicks()
-    predicted = predict_ticks(model, history)
+    model.update(history)
+    predicted = model.predictWithConfidence(num_ticks=5)
     asyncio.create_task(post_prediction_learn(predicted['prices']))
     return { "predicted": predicted }
 
@@ -110,14 +121,7 @@ def health_check():
         "tick_buffer_len": len(tick_buffer)
     }
 
-# ✅ Startup: Load model + start WebSocket
+# ✅ Startup: Launch WebSocket listener
 @app.on_event("startup")
 async def startup_event():
-    global model
-    try:
-        model = load_model()
-        print("✅ Model loaded successfully.")
-    except Exception as e:
-        print(f"❌ Failed to load model: {e}")
-        model = None
     asyncio.create_task(websocket_listener())
