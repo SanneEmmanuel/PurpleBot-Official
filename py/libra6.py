@@ -89,32 +89,32 @@ class Libra6:
             self.last_diffs = []
 
     def predictWithConfidence(self, num_ticks=1, tick_size=0.1):
-    if len(self.last_prices) < 2 or len(self.last_diffs) < 300:
-        raise ValueError("Need at least 301 prices for prediction!")
-    current_diffs = list(self.last_diffs[-300:])
-    last_price = self.last_prices[-1]
-    preds = []
-    confidences = []
-    prices = []
-    for _ in range(num_ticks):
-        inp = np.array(current_diffs).reshape(1, 300, 1).astype(np.float32)
-        inp = torch.tensor(inp, dtype=torch.float32, device=self.device)
-        with torch.no_grad():
-            prob = self.model(inp).item()
-            next_diff = 1 if prob > 0.5 else -1
-        preds.append(next_diff)
-        confidences.append(prob if next_diff == 1 else 1-prob)
-        current_diffs.append(next_diff)
-        if len(current_diffs) > 300:
-            current_diffs = current_diffs[-300:]
-        last_price = last_price + next_diff * tick_size
-        prices.append(round(last_price, 6))
-    return {
-        "diffs": preds,
-        "prices": prices,
-        "confidences": confidences  # List of confidence values per prediction
-    }
-    
+        if len(self.last_prices) < 2 or len(self.last_diffs) < 300:
+            raise ValueError("Need at least 301 prices for prediction!")
+        current_diffs = list(self.last_diffs[-300:])
+        last_price = self.last_prices[-1]
+        preds = []
+        confidences = []
+        prices = []
+        for _ in range(num_ticks):
+            inp = np.array(current_diffs).reshape(1, 300, 1).astype(np.float32)
+            inp = torch.tensor(inp, dtype=torch.float32, device=self.device)
+            with torch.no_grad():
+                prob = self.model(inp).item()
+                next_diff = 1 if prob > 0.5 else -1
+            preds.append(next_diff)
+            confidences.append(prob if next_diff == 1 else 1 - prob)
+            current_diffs.append(next_diff)
+            if len(current_diffs) > 300:
+                current_diffs = current_diffs[-300:]
+            last_price = last_price + next_diff * tick_size
+            prices.append(round(last_price, 6))
+        return {
+            "diffs": preds,
+            "prices": prices,
+            "confidences": confidences  # List of confidence values per prediction
+        }
+
     def predict(self, num_ticks=1, tick_size=0.1):
         """
         Predict next num_ticks ticks, returning both diffs and absolute prices.
@@ -156,7 +156,8 @@ class Libra6:
             for t in range(300, len(diffs)):
                 x = diffs[t-300:t]
                 y = diffs[t]
-                if y == 0: continue  # skip flat
+                if y == 0:
+                    continue  # skip flat
                 X.append(x)
                 Y.append(1 if y > 0 else 0)
         if not X:
