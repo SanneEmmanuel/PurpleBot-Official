@@ -15,6 +15,12 @@ import cloudinary.uploader
 import cloudinary.api
 
 # --- TCN Components ---
+class Chomp1d(nn.Module):
+    def __init__(self, chomp_size):
+        super().__init__()
+        self.chomp_size = chomp_size
+    def forward(self, x):
+        return x[:, :, :-self.chomp_size] if self.chomp_size > 0 else x
 
 class TCNBlock(nn.Module):
     """
@@ -26,13 +32,13 @@ class TCNBlock(nn.Module):
         super(TCNBlock, self).__init__()
         self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
-        self.chomp1 = lambda x: x[:, :, :-padding]
+        self.chomp1 = Chomp1d(padding) 
         self.relu1 = nn.ReLU()
         self.dropout1 = nn.Dropout(dropout)
 
         self.conv2 = weight_norm(nn.Conv1d(n_outputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
-        self.chomp2 = lambda x: x[:, :, :-padding]
+        self.chomp2 = Chomp1d(padding)
         self.relu2 = nn.ReLU()
         self.dropout2 = nn.Dropout(dropout)
 
