@@ -1,13 +1,11 @@
-
-
 # @title Training on Collab by Sanne Karibo\n 🔁 Upload Model, Install Dependencies & Train
 from google.colab import files
-import os, asyncio, json,time
+import os, asyncio, json, time
 import importlib.util
 import logging
 logging.basicConfig(level=logging.INFO, format="🔧 %(message)s")
 
-print("📤 Upload your `Libra.py` file...")
+print("📤 Upload your `Libra6.py` file...")
 uploaded = files.upload()
 
 # Save the uploaded Python file
@@ -21,9 +19,9 @@ else:
 print(f"✅ Uploaded: {model_filename}")
 
 # ✅ Install all required dependencies quietly
-!pip install -q torch numpy requests cloudinary
+!pip install -q torch numpy requests cloudinary websockets nest_asyncio
 
-# === 🧠 Load model file dynamically ===
+# === 🧠 Load Libra6 dynamically ===
 spec = importlib.util.spec_from_file_location("libra_module", model_filename)
 libra = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(libra)
@@ -66,25 +64,23 @@ async def getTicks(count = 300):
 
     return ticks[-count:]
 
-
 # === 🔃 Fetch ticks ===
 tick_data = asyncio.run(getTicks(89600))
-print(f"✊received {len(tick_data)}ticks to Ram✔️")
+print(f"✊ Received {len(tick_data)} ticks to RAM ✔️")
 
-# === 🧹 Prepare (X, Y) data for training ===
-X, Y = [], []
-window = 300
-output = 5
-for i in range(len(tick_data) - window - output):
-    x_seq = tick_data[i:i+window]
-    y_seq = tick_data[i+window:i+window+output]
-    X.append(x_seq)
-    Y.append(y_seq)
+# === 🧹 Prepare sequences of at least 301 prices ===
+window_size = 301
+sequences = []
+for i in range(len(tick_data) - window_size):
+    window = tick_data[i:i+window_size]
+    sequences.append(window)
 
-print(f"🧪 Prepared {len(X)} samples.")
+print(f"🧪 Prepared {len(sequences)} sequences of length {window_size}")
 
 # === 🔧 Train model ===
-model = libra.load_model()
-trained = libra.retrain_and_upload(model, X, Y, epochs=100, peft_rank=0)
+model = libra.Libra6()
+model.download_model_from_cloudinary()
+model.continuous_train(sequences, epochs=100)
+model.upload_model_to_cloudinary()
 
-print("✅ Training complete::",trained)
+print("✅ Training complete ✅")
