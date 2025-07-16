@@ -25,7 +25,7 @@ class Chomp1d(nn.Module):
 
 class TCNBlock(nn.Module):
     def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2):
-        super(TCNBlock, self).__init__()
+        super().__init__()
         self.conv1 = weight_norm(nn.Conv1d(n_inputs, n_outputs, kernel_size,
                                            stride=stride, padding=padding, dilation=dilation))
         self.chomp1 = Chomp1d(padding)
@@ -40,10 +40,10 @@ class TCNBlock(nn.Module):
                                  self.conv2, self.chomp2, self.relu2, self.dropout2)
         self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
         self.relu = nn.ReLU()
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
+        nn.init.normal_(self.conv1.weight, 0, 0.01)
+        nn.init.normal_(self.conv2.weight, 0, 0.01)
         if self.downsample is not None:
-            self.downsample.weight.data.normal_(0, 0.01)
+            nn.init.normal_(self.downsample.weight, 0, 0.01)
 
     def forward(self, x):
         out = self.net(x)
@@ -52,7 +52,7 @@ class TCNBlock(nn.Module):
 
 class TCN(nn.Module):
     def __init__(self, num_inputs, num_channels, kernel_size=2, dropout=0.2):
-        super(TCN, self).__init__()
+        super().__init__()
         layers = []
         num_levels = len(num_channels)
         for i in range(num_levels):
@@ -68,11 +68,7 @@ class TCN(nn.Module):
 
 # --- Optimized Fusion Model ---
 class MultiScaleTCNPatternFusion(nn.Module):
-    """
-    Combines a TCN with a multi-scale pattern embedding module. Pattern matching
-    is accelerated by converting patterns into unique integers for fast comparison.
-    """
-    def __init__(self, input_size=1, tcn_channels=[32, 64], pattern_scales=[3, 5, 7], num_top_patterns=50, dropout=0.2,device="cpu"):
+    def __init__(self, input_size=1, tcn_channels=[32, 64], pattern_scales=[3, 5, 7], num_top_patterns=50, dropout=0.2, device="cpu"):
         super().__init__()
         self.pattern_scales = pattern_scales
         self.num_top_patterns = num_top_patterns
@@ -87,11 +83,15 @@ class MultiScaleTCNPatternFusion(nn.Module):
             total_pattern_embedding_size += num_top_patterns
 
         fusion_input_size = tcn_output_size + total_pattern_embedding_size
-        self.mlp = nn.Sequential(nn.Linear(fusion_input_size, fusion_input_size // 2), nn.ReLU(),
-                                 nn.Dropout(dropout), nn.Linear(fusion_input_size // 2, 1))
+        self.mlp = nn.Sequential(
+            nn.Linear(fusion_input_size, fusion_input_size // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(fusion_input_size // 2, 1))
         self.sigmoid = nn.Sigmoid()
 
     def _calculate_pattern_embedding_optimized(self, x, scale):
+        x = x.to(self.device)
         x_binary = (x.squeeze(-1) + 1) / 2
         x_unfolded = x_binary.unfold(dimension=1, size=scale, step=1).long()
         base_powers = getattr(self, f'base_powers_{scale}')
@@ -105,6 +105,7 @@ class MultiScaleTCNPatternFusion(nn.Module):
         return embedding
 
     def forward(self, x):
+        x = x.to(self.device, non_blocking=True)
         out_tcn = self.tcn(x.permute(0, 2, 1))[:, :, -1]
         pattern_embeddings = [self._calculate_pattern_embedding_optimized(x, scale) for scale in self.pattern_scales]
         fused = torch.cat([out_tcn] + pattern_embeddings, dim=1)
@@ -125,7 +126,6 @@ class MultiScaleTCNPatternFusion(nn.Module):
                 for i in range(len(binary_seq) - scale + 1):
                     pattern_int = np.dot(binary_seq[i:i+scale], base_powers)
                     pattern_counts[pattern_int] += 1
-            
             if not pattern_counts: continue
             top_patterns_list = [p[0] for p in pattern_counts.most_common(self.num_top_patterns)]
             buffer_name = f'top_patterns_{scale}'
@@ -137,8 +137,8 @@ class Libra6:
     MIN_PRICES_FOR_PREDICTION = 301
 
     def __init__(self, device=None, model_path=None, download_on_init=False, upload_on_fail=False):
-        self.model = MultiScaleTCNPatternFusion()
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = MultiScaleTCNPatternFusion(device=self.device)
         self.model.to(self.device)
         self.last_prices = []
         self.model_loaded_successfully = False
@@ -185,7 +185,6 @@ class Libra6:
         self.model_loaded_successfully = False
         return False
 
-
     def upload_model_to_cloudinary(self, max_attempts=3):
         self.save_checkpoint(self.MODEL_PATH)
         with zipfile.ZipFile(self.ZIP_PATH, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -201,7 +200,7 @@ class Libra6:
                 if attempt < max_attempts - 1: time.sleep(2 ** (attempt + 1))
         logging.error("❌ All attempts to upload model to Cloudinary failed.")
         return False
-        
+
     @staticmethod
     def prices_to_diffs(prices):
         return np.sign(np.diff(np.asarray(prices))).astype(int)
@@ -213,17 +212,19 @@ class Libra6:
 
     def predictWithConfidence(self, num_ticks=1, tick_size=0.1, prices=None):
         if prices is not None:
-            if len(prices) < self.MIN_PRICES_FOR_PREDICTION: raise ValueError(f"Need {self.MIN_PRICES_FOR_PREDICTION} prices, got {len(prices)}")
+            if len(prices) < self.MIN_PRICES_FOR_PREDICTION:
+                raise ValueError(f"Need {self.MIN_PRICES_FOR_PREDICTION} prices, got {len(prices)}")
             source_prices = list(prices)
         else:
-            if len(self.last_prices) < self.MIN_PRICES_FOR_PREDICTION: raise ValueError(f"Need {self.MIN_PRICES_FOR_PREDICTION} prices, have {len(self.last_prices)}")
+            if len(self.last_prices) < self.MIN_PRICES_FOR_PREDICTION:
+                raise ValueError(f"Need {self.MIN_PRICES_FOR_PREDICTION} prices, have {len(self.last_prices)}")
             source_prices = self.last_prices
 
         diffs = self.prices_to_diffs(source_prices)
         current_diffs = list(diffs[-(self.MIN_PRICES_FOR_PREDICTION - 1):])
         last_price = source_prices[-1]
         preds, confidences, predicted_prices = [], [], []
-        
+
         self.model.eval()
         with torch.no_grad():
             for _ in range(num_ticks):
@@ -255,23 +256,37 @@ class Libra6:
             logging.error("No valid training samples created.")
             return {"final_loss": -1, "trained_samples": 0}
 
-        dataset = torch.utils.data.TensorDataset(torch.tensor(np.stack(X), dtype=torch.float32).unsqueeze(-1),
-                                                 torch.tensor(np.array(Y), dtype=torch.float32))
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        X_tensor = torch.tensor(np.stack(X), dtype=torch.float32).unsqueeze(-1)
+        Y_tensor = torch.tensor(np.array(Y), dtype=torch.float32)
+        pin_memory = self.device == "cuda"
+        dataset = torch.utils.data.TensorDataset(X_tensor, Y_tensor)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         criterion = nn.BCELoss()
         self.model.train()
         final_epoch_loss = 0.0
+
+        scaler = torch.cuda.amp.GradScaler() if self.device == 'cuda' else None
+
         for epoch in range(epochs):
             total_loss = 0.0
             for xb, yb in loader:
-                xb, yb = xb.to(self.device), yb.to(self.device)
+                xb, yb = xb.to(self.device, non_blocking=True), yb.to(self.device, non_blocking=True)
                 optimizer.zero_grad()
-                out = self.model(xb)
-                loss = criterion(out, yb)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                optimizer.step()
+                if scaler:
+                    with torch.cuda.amp.autocast():
+                        out = self.model(xb)
+                        loss = criterion(out, yb)
+                    scaler.scale(loss).backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    out = self.model(xb)
+                    loss = criterion(out, yb)
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    optimizer.step()
                 total_loss += loss.item() * xb.size(0)
             final_epoch_loss = total_loss / len(dataset)
             logging.info(f"Epoch {epoch+1}/{epochs} | Loss: {final_epoch_loss:.6f}")
@@ -290,11 +305,8 @@ class Libra6:
         self.model_loaded_successfully = True
         logging.info(f"✅ Loaded checkpoint: {name}")
 
-
 if __name__ == "__main__":
     print("\n--- Initializing a new model instance ---")
-    # Set download_on_init to True to attempt to fetch the latest model from the cloud.
-    # If it fails, upload_on_fail=True will save the new untrained model as a starting point.
     model = Libra6(download_on_init=True, upload_on_fail=True)
 
     print("\n--- Generating dummy data and training the model ---")
