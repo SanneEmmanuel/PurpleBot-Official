@@ -95,7 +95,7 @@ class MultiScaleTCNPatternFusion(nn.Module):
         x_binary = (x.squeeze(-1) + 1) / 2
         x_unfolded = x_binary.unfold(dimension=1, size=scale, step=1).long()
         base_powers = getattr(self, f'base_powers_{scale}')
-        window_integers = x_unfolded @ base_powers
+        window_integers = x_unfolded.float() @ base_powers.float()
         top_pattern_integers = getattr(self, f'top_patterns_{scale}')
         matches = window_integers.unsqueeze(-1) == top_pattern_integers
         embedding = matches.float().sum(dim=1)
