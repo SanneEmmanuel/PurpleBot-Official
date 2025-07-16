@@ -110,7 +110,7 @@ class MultiScaleTCNPatternFusion(nn.Module):
         pattern_embeddings = [self._calculate_pattern_embedding_optimized(x, scale) for scale in self.pattern_scales]
         fused = torch.cat([out_tcn] + pattern_embeddings, dim=1)
         out = self.mlp(fused).squeeze(-1)
-        return self.sigmoid(out)
+        return out  
 
     def update_patterns(self, price_seqs, min_prices_for_seq):
         logging.info(f"🧠 Updating multi-scale pattern memory from {len(price_seqs)} sequences...")
@@ -262,7 +262,7 @@ class Libra6:
         dataset = torch.utils.data.TensorDataset(X_tensor, Y_tensor)
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, pin_memory=pin_memory)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-        criterion = nn.BCELoss()
+        criterion = nn.BCEWithLogitsLoss()
         self.model.train()
         final_epoch_loss = 0.0
 
