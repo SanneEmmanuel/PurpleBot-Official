@@ -79,7 +79,7 @@ async def post_prediction_learn(predicted_prices):
         print("✅ Prediction Success ::", predicted_prices)
         await asyncio.sleep(5)
 
-        ticks = await getTicks(305)
+        ticks = await getTicks(303)
         actual, history = ticks[:5], ticks[5:]
         print(f"✔️Actual Prices:=={actual}")
 
@@ -93,7 +93,7 @@ async def post_prediction_learn(predicted_prices):
         print("🔁 Retrain:", f"{epochs} epoch(s)" if epochs else "No retraining")
 
         if epochs and len(history) >= 300:
-            await asyncio.to_thread(model.continuous_train, [history[:301]], epochs)
+            await asyncio.to_thread(model.continuous_train, [history[:302]], epochs)
 
             # Re-upload updated model
             model.upload_model_to_cloudinary()
