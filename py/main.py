@@ -98,8 +98,7 @@ async def predict(ticks: Optional[int] = 5):
 
     history = await getTicks()
     model.update(history)
-    predicted = model.predictWithConfidence(num_ticks=ticks)  # Use the provided ticks parameter
-    asyncio.create_task(post_prediction_learn(predicted['prices']))
+    predicted = model.predictWithConfidence(num_ticks=ticks) 
     return predicted
         
 
