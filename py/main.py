@@ -66,39 +66,25 @@ async def fetch_and_store_ticks(count):
         return fetched
 
 # ✅ Branchless getTicks with fallback
-async def getTicks(count=300):
+async def getTicks(count=301):
     return (
         list(tick_buffer)[-count:]
         if len(tick_buffer) >= count
         else await fetch_and_store_ticks(count)
     )
 
-# ✅ Background retrain
-async def post_prediction_learn(predicted_prices):
+@app.get("/prices")
+async def get_prices(count: Optional[int] = 300):
     try:
-        print("✅ Prediction Success ::", predicted_prices)
-        await asyncio.sleep(5)
-
-        ticks = await getTicks(303)
-        actual, history = ticks[:5], ticks[5:]
-        print(f"✔️Actual Prices:=={actual}")
-
-        pred, act = np.array(predicted_prices, dtype=np.float32), np.array(actual, dtype=np.float32)
-        diffs = np.abs(act - pred)
-        avg = diffs.mean()
-
-        print("📉 Error:", np.round(diffs, 2).tolist(), "| Avg:", round(float(avg), 3))
-
-        epochs = int(np.clip((avg / 0.2) * 10, 1, 10)) * int(avg >= 0.5)
-        print("🔁 Retrain:", f"{epochs} epoch(s)" if epochs else "No retraining")
-
-        if epochs and len(history) >= 300:
-            await asyncio.to_thread(model.continuous_train, [history[:302]], epochs)
-
-            # Re-upload updated model
-            model.upload_model_to_cloudinary()
+        ticks = await getTicks(count)
+        return {
+            "data": ticks,
+            "count": len(ticks)
+        }
     except Exception as e:
-        print("❌ post_prediction_learn error:", e)
+        raise HTTPException(status_code=500, detail=str(e))
+        
+# ✅ Background retrain
 
 # ✅ Prediction endpoint
 @app.post("/predict")
