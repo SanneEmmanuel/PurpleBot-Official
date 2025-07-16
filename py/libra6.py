@@ -176,13 +176,13 @@ class Libra6:
                 with zipfile.ZipFile(self.ZIP_PATH, 'r') as zf: zf.extractall(os.path.dirname(self.MODEL_PATH))
                 self.load_checkpoint(self.MODEL_PATH)
                 logging.info("✅ Successfully downloaded and loaded model from Cloudinary.")
-                return true
+                return True
             except Exception as e:
                 logging.warning(f"⚠️ Cloudinary download attempt {attempt + 1}/{max_attempts} failed: {e}")
                 if attempt < max_attempts - 1: time.sleep(2 ** (attempt + 1))
         logging.error("❌ All attempts to download model from Cloudinary failed.")
         self.model_loaded_successfully = False
-        return false
+        return False
 
 
     def upload_model_to_cloudinary(self, max_attempts=3):
@@ -294,7 +294,7 @@ if __name__ == "__main__":
     print("\n--- Initializing a new model instance ---")
     # Set download_on_init to True to attempt to fetch the latest model from the cloud.
     # If it fails, upload_on_fail=True will save the new untrained model as a starting point.
-    model = Libra7(download_on_init=True, upload_on_fail=True)
+    model = Libra6(download_on_init=True, upload_on_fail=True)
 
     print("\n--- Generating dummy data and training the model ---")
     np.random.seed(42)
