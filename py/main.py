@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio, websockets, json, numpy as np
 from collections import deque
 
-from Libra6 import Libra6  # ✅ Directly import the class
+from libra6 import Libra6  # ✅ Directly import the class
 
 app = FastAPI()
 
