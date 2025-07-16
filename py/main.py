@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio, websockets, json, numpy as np
 from collections import deque
+from typing import Optional
 
 from libra6 import Libra6  # ✅ Directly import the class
 
@@ -84,19 +85,23 @@ async def get_prices(count: Optional[int] = 300):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
         
-# ✅ Background retrain
 
-# ✅ Prediction endpoint
+
+# ✅ Updated Prediction endpoint with ticks parameter
 @app.post("/predict")
-async def predict():
+async def predict(ticks: Optional[int] = 5):
     if model is None:
-        return { "error": "Model not loaded." }
+        return {"error": "Model not loaded."}
+
+    if ticks <= 0:
+        raise HTTPException(status_code=400, detail="Number of ticks must be positive")
 
     history = await getTicks()
     model.update(history)
-    predicted = model.predictWithConfidence(num_ticks=5)
+    predicted = model.predictWithConfidence(num_ticks=ticks)  # Use the provided ticks parameter
     asyncio.create_task(post_prediction_learn(predicted['prices']))
-    return { "predicted": predicted }
+    return predicted
+        
 
 # ✅ Health check
 @app.get("/")
