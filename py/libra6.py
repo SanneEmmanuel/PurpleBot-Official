@@ -72,12 +72,13 @@ class MultiScaleTCNPatternFusion(nn.Module):
     Combines a TCN with a multi-scale pattern embedding module. Pattern matching
     is accelerated by converting patterns into unique integers for fast comparison.
     """
-    def __init__(self, input_size=1, tcn_channels=[32, 64], pattern_scales=[3, 5, 7], num_top_patterns=50, dropout=0.2):
+    def __init__(self, input_size=1, tcn_channels=[32, 64], pattern_scales=[3, 5, 7], num_top_patterns=50, dropout=0.2,device="cpu"):
         super().__init__()
         self.pattern_scales = pattern_scales
         self.num_top_patterns = num_top_patterns
         self.tcn = TCN(input_size, tcn_channels, kernel_size=7, dropout=dropout)
         tcn_output_size = tcn_channels[-1]
+        self.device = device
 
         total_pattern_embedding_size = 0
         for scale in pattern_scales:
