@@ -237,7 +237,7 @@ class Mind:
                 with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'r') as zf:
                     zf.extractall(os.path.dirname(self.MODEL_LOCAL_PATH))
 
-                state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device)
+                state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state['model_state_dict'])
                 if 'scaler_min' in state and 'scaler_scale' in state:
                     self.scaler.min_ = state['scaler_min']
