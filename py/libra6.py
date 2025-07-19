@@ -109,8 +109,8 @@ class MultiScaleTCNPatternFusion(nn.Module):
         out_tcn = self.tcn(x.permute(0, 2, 1))[:, :, -1]
         pattern_embeddings = [self._calculate_pattern_embedding_optimized(x, scale) for scale in self.pattern_scales]
         fused = torch.cat([out_tcn] + pattern_embeddings, dim=1)
-        out = self.mlp(fused).squeeze(-1)
-        return out  
+        logit = self.mlp(fused).squeeze(-1)
+        return logit  # raw logit for BCEWithLogitsLoss
 
     def update_patterns(self, price_seqs, min_prices_for_seq):
         logging.info(f"🧠 Updating multi-scale pattern memory from {len(price_seqs)} sequences...")
@@ -230,7 +230,8 @@ class Libra6:
             for _ in range(num_ticks):
                 inp = np.array(current_diffs).reshape(1, len(current_diffs), 1)
                 inp_tensor = torch.tensor(inp, dtype=torch.float32, device=self.device)
-                prob = self.model(inp_tensor).item()
+                logit = self.model(inp_tensor).item()
+                prob = torch.sigmoid(torch.tensor(logit)).item()
                 next_diff = 1 if prob > 0.5 else -1
                 preds.append(next_diff)
                 confidences.append(prob if next_diff == 1 else 1 - prob)
