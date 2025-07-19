@@ -100,11 +100,11 @@ async def predict(ticks: Optional[int] = 5):
     model.update(history)
     predicted = model.predictWithConfidence(num_ticks=ticks) 
     return predicted
-        
 
-# ✅ Health check
-@app.get("/")
-def health_check():
+
+@app.get("/", include_in_schema=False)
+@app.head("/", include_in_schema=False)
+def root():
     return {
         "status": "ok",
         "model_loaded": model is not None,
