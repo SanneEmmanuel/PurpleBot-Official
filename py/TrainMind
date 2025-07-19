@@ -84,7 +84,7 @@ for i in range(len(ohlc_pairs) - sequence_length):
 print(f"🔁 Prepared {len(sequences)} training sequences")
 
 # === 🔧 Train the Mind ===
-mind = libra.Mind(sequence_length=sequence_length, download_on_init=True, upload_on_fail=True)
+mind = Mind.Mind(sequence_length=sequence_length, download_on_init=True, upload_on_fail=True)
 
 if not mind.model_loaded_successfully:
     logging.info("🧠 No pre-trained model found. Training from scratch.")
