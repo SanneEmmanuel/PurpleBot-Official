@@ -204,7 +204,7 @@ class Mind:
             'scaler_min': self.scaler.min_,
             'scaler_scale': self.scaler.scale_
         }
-        torch.save(model.state_dict(), self.MODEL_LOCAL_PATH)
+        torch.save(state, self.MODEL_LOCAL_PATH)
 
         # Zip the file for more efficient storage
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -245,7 +245,7 @@ class Mind:
                     zf.extractall(os.path.dirname(self.MODEL_LOCAL_PATH))
 
                 # Load the state
-                state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device)
+                state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state['model_state_dict'])
                 self.scaler.min_ = state['scaler_min']
                 self.scaler.scale_ = state['scaler_scale']
