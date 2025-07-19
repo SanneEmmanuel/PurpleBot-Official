@@ -1,3 +1,4 @@
+
 # @title 🧠 Training on Deriv Candle Data by Sanne Karibo
 from google.colab import files
 import os, asyncio, json, time
@@ -32,7 +33,7 @@ nest_asyncio.apply()
 import websockets
 
 # === 🌐 Deriv getCandles() WebSocket function ===
-async def getCandles(count=100020, granularity=60, symbol="R_100"):
+async def getCandles(count=100020, granularity=60, symbol="stpRNG"):
     uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
     candles = []
     end = "latest"
@@ -42,7 +43,7 @@ async def getCandles(count=100020, granularity=60, symbol="R_100"):
         while remaining > 0:
             batch_size = min(5000, remaining)
             await ws.send(json.dumps({
-                "candles": symbol,
+                "ticks_history": symbol,
                 "end": end,
                 "count": batch_size,
                 "style": "candles",
