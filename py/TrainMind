@@ -1,0 +1,102 @@
+# @title 🧠 Training on Deriv Candle Data by Sanne Karibo
+from google.colab import files
+import os, asyncio, json, time
+import importlib.util
+import logging
+logging.basicConfig(level=logging.INFO, format="🔧 %(message)s")
+
+print("📤 Upload your `Mind.py` file...")
+uploaded = files.upload()
+
+# Save the uploaded Python file
+for filename in uploaded:
+    if filename.endswith(".py"):
+        model_filename = filename
+        break
+else:
+    raise RuntimeError("❌ No valid .py file uploaded.")
+
+print(f"✅ Uploaded: {model_filename}")
+
+# ✅ Install dependencies
+!pip install -q torch numpy requests cloudinary websockets nest_asyncio
+
+# === 🧠 Load Mind_v1 dynamically ===
+spec = importlib.util.spec_from_file_location("Mind_module", model_filename)
+Mind = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(Mind)
+
+# === 🔁 Async Setup ===
+import nest_asyncio
+nest_asyncio.apply()
+import websockets
+
+# === 🌐 Deriv getCandles() WebSocket function ===
+async def getCandles(count=100020, granularity=60, symbol="R_100"):
+    uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+    candles = []
+    end = "latest"
+    remaining = count
+
+    async with websockets.connect(uri) as ws:
+        while remaining > 0:
+            batch_size = min(5000, remaining)
+            await ws.send(json.dumps({
+                "candles": symbol,
+                "end": end,
+                "count": batch_size,
+                "style": "candles",
+                "granularity": granularity
+            }))
+            res = json.loads(await ws.recv())
+            if "error" in res:
+                raise RuntimeError(f"❌ Deriv API Error: {res['error']['message']}")
+
+            data = res.get("candles", [])
+            if not data:
+                break
+
+            candles = data + candles
+            remaining -= len(data)
+            end = data[0]["epoch"] - 1  # Go backward
+            await asyncio.sleep(0.1)
+
+    if not candles:
+        raise ValueError("❌ No candle data fetched.")
+    
+    return candles[-count:]  # Return latest N candles
+
+# === 🔃 Fetch ~100,020 candles (20k sequences of 5 + 20 steps) ===
+candle_data = asyncio.run(getCandles())
+print(f"🕯️ Received {len(candle_data)} candles ✔️")
+
+# === 🧪 Prepare HL pairs for Mind model ===
+ohlc_pairs = [[c["high"], c["low"]] for c in candle_data]
+
+# === 🧹 Prepare sequences of 20 steps with 1 step ahead label
+sequence_length = 20
+sequences = []
+for i in range(len(ohlc_pairs) - sequence_length):
+    seq = ohlc_pairs[i:i+sequence_length+1]  # +1 includes label
+    sequences.append(seq)
+
+print(f"🔁 Prepared {len(sequences)} training sequences")
+
+# === 🔧 Train the Mind ===
+mind = libra.Mind(sequence_length=sequence_length, download_on_init=True, upload_on_fail=True)
+
+if not mind.model_loaded_successfully:
+    logging.info("🧠 No pre-trained model found. Training from scratch.")
+else:
+    logging.info("🧠 Loaded model. Continuing training.")
+
+# Strip label from each sequence
+input_sequences = [s[:-1] for s in sequences]
+labels = [s[-1] for s in sequences]
+
+# Combine them to train
+training_data = [*input_sequences, *[labels]]  # labels needed internally anyway
+mind.learn(ohlc_pairs, epochs=50, lr=0.001, batch_size=64)
+mind.sleep()
+
+print("✅ Mind has been trained and uploaded to Cloudinary.")
