@@ -200,6 +200,7 @@ class Mind:
             'model_state_dict': self.model.state_dict(),
             'scaler_min': getattr(self.scaler, "min_", None),
             'scaler_scale': getattr(self.scaler, "scale_", None)
+            'scaler_n_samples': getattr(self.scaler, "n_samples_seen_", None)
         }
         torch.save(state, self.MODEL_LOCAL_PATH)
 
@@ -242,6 +243,8 @@ class Mind:
                 if 'scaler_min' in state and 'scaler_scale' in state:
                     self.scaler.min_ = state['scaler_min']
                     self.scaler.scale_ = state['scaler_scale']
+                    self.scaler.n_samples_seen_ = state['scaler_n_samples']
+
                 else:
                     raise RuntimeError("Scaler parameters missing from checkpoint.")
                 self.model.eval()
