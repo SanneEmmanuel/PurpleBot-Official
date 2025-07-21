@@ -199,7 +199,7 @@ class Mind:
         state = {
             'model_state_dict': self.model.state_dict(),
             'scaler_min': getattr(self.scaler, "min_", None),
-            'scaler_scale': getattr(self.scaler, "scale_", None)
+            'scaler_scale': getattr(self.scaler, "scale_", None),
             'scaler_n_samples': getattr(self.scaler, "n_samples_seen_", None)
         }
         torch.save(state, self.MODEL_LOCAL_PATH)
