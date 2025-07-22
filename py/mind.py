@@ -202,7 +202,8 @@ class Mind:
             'scaler_scale': getattr(self.scaler, "scale_", None),
             'scaler_n_samples': getattr(self.scaler, "n_samples_seen_", None)
         }
-        torch.save(state, self.MODEL_LOCAL_PATH)
+        print(state)
+        torch.save(model.state_dict(), self.MODEL_LOCAL_PATH)
 
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(self.MODEL_LOCAL_PATH, os.path.basename(self.MODEL_LOCAL_PATH))
