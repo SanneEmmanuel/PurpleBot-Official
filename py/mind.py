@@ -203,7 +203,7 @@ class Mind:
             'scaler_n_samples': int(self.scaler.n_samples_seen_) if hasattr(self.scaler, "n_samples_seen_") else None
         }
     
-        print(state)
+        
         torch.save(state, self.MODEL_LOCAL_PATH)
 
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
@@ -242,13 +242,13 @@ class Mind:
 
                 state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state['model_state_dict'])
-                if 'scaler_min' in state and 'scaler_scale' in state:
-                    self.scaler.min_ = np.array(state['scaler_min'])
-                    self.scaler.scale_ = np.array(state['scaler_scale'])
-                    self.scaler.n_samples_seen_ = state['scaler_n_samples']
+               # if 'scaler_min' in state and 'scaler_scale' in state:
+                  #  self.scaler.min_ = np.array(state['scaler_min'])
+                #    self.scaler.scale_ = np.array(state['scaler_scale'])
+                #    self.scaler.n_samples_seen_ = state['scaler_n_samples']
 
-                else:
-                    raise RuntimeError("Scaler parameters missing from checkpoint.")
+             #   else:
+                  #  raise RuntimeError("Scaler parameters missing from checkpoint.")
                 self.model.eval()
                 self.model_loaded_successfully = True
                 logging.info("✅ Mind has awakened successfully.")
