@@ -198,12 +198,13 @@ class Mind:
         logging.info("Mind is going to sleep. Saving memory to the cloud...")
         state = {
             'model_state_dict': self.model.state_dict(),
-            'scaler_min': getattr(self.scaler, "min_", None),
-            'scaler_scale': getattr(self.scaler, "scale_", None),
-            'scaler_n_samples': getattr(self.scaler, "n_samples_seen_", None)
+            'scaler_min': self.scaler.min_.tolist() if hasattr(self.scaler, "min_") else None,
+            'scaler_scale': self.scaler.scale_.tolist() if hasattr(self.scaler, "scale_") else None,
+            'scaler_n_samples': int(self.scaler.n_samples_seen_) if hasattr(self.scaler, "n_samples_seen_") else None
         }
+    
         print(state)
-        torch.save(model.state_dict(), self.MODEL_LOCAL_PATH)
+        torch.save(state, self.MODEL_LOCAL_PATH)
 
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
             zf.write(self.MODEL_LOCAL_PATH, os.path.basename(self.MODEL_LOCAL_PATH))
@@ -242,8 +243,8 @@ class Mind:
                 state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(state['model_state_dict'])
                 if 'scaler_min' in state and 'scaler_scale' in state:
-                    self.scaler.min_ = state['scaler_min']
-                    self.scaler.scale_ = state['scaler_scale']
+                    self.scaler.min_ = np.array(state['scaler_min'])
+                    self.scaler.scale_ = np.array(state['scaler_scale'])
                     self.scaler.n_samples_seen_ = state['scaler_n_samples']
 
                 else:
