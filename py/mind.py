@@ -182,6 +182,7 @@ class Mind:
             'scaler_params': {
                 'data_min': self.scaler.data_min_,
                 'data_max': self.scaler.data_max_,
+                'data_range': scaler.data_range_,
                 'feature_range': self.scaler.feature_range,
                 'scale_': self.scaler.scale_,
                 'min_': self.scaler.min_
@@ -233,10 +234,11 @@ class Mind:
                 self.scaler = MinMaxScaler(feature_range=params['feature_range'])
                 self.scaler.data_min_ = params['data_min']
                 self.scaler.data_max_ = params['data_max']
-                self.scaler.scale_ = (self.scaler.feature_range[1] - self.scaler.feature_range[0]) / (
-                    self.scaler.data_max_ - self.scaler.data_min_)
-                self.scaler.min_ = self.scaler.feature_range[0] - self.scaler.data_min_ * self.scaler.scale_
-                
+                self.scaler.data_range_ = params['data_range']
+                self.scaler.scale_ = params['scale_']
+                self.scaler.min_ = params['min_']
+
+
                 self.model.eval()
                 self.model_loaded_successfully = True
                 logger.success("Model loaded successfully.")
