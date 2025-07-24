@@ -1,40 +1,45 @@
 # ========================
 # API and Web Server
 # ========================
-fastapi==0.116.1         # Released Jul 11, 2025 :contentReference[oaicite:1]{index=1}
-uvicorn[standard]==0.35.0  # Uvicorn 0.35.0 released Jun 28, 2025 :contentReference[oaicite:2]{index=2}
-aiofiles==0.8.0           # Latest on PyPI from Nov 27, 2021 (no newer) :contentReference[oaicite:3]{index=3}
-httpx==0.28.1             # Latest on PyPI :contentReference[oaicite:4]{index=4}
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+aiofiles==0.8.0
+httpx==0.28.1
 
 # ========================
 # PyTorch and Math (Optimized)
 # ========================
-torch==2.7.1              # Latest stable release Jun 4, 2025 :contentReference[oaicite:5]{index=5}
-numpy==1.26.2             # Latest patch release Jun 21, 2025 :contentReference[oaicite:6]{index=6}
-#cython==3.1.2              Latest stable release Jun 9, 2025 :contentReference[oaicite:7]{index=7}
+torch==2.7.1
+numpy==1.26.2
+cython==3.1.2
 
 # ========================
 # WebSocket + Async
 # ========================
-websockets==15.0.1        # Latest stable Mar 5, 2025 :contentReference[oaicite:8]{index=8}
-nest_asyncio==1.6.0       # No newer version found; remains the same
+websockets==15.0.1
+nest_asyncio==1.6.0
 
 # ========================
 # Schema Validation
 # ========================
-pydantic==2.7.1           # No newer version found on PyPI (current remains) — you might check for any 2.8+ prerelease
+pydantic==2.7.1
 
 # ========================
 # Logging & Monitoring
 # ========================
-loguru==0.7.2             # No newer version found
+loguru==0.7.2
 
 # ========================
 # Cloudinary SDK
 # ========================
-cloudinary==1.39.1        # Remains latest as no newer version noted
+cloudinary==1.39.1
 
 # ========================
 # HTTP Utilities
 # ========================
-requests==2.31.0          # No newer version observed
+requests==2.31.0
+
+# ========================
+# Machine Learning
+# ========================
+scikit-learn==1.5.0  # Added missing dependency
