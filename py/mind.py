@@ -3,12 +3,12 @@ import os
 import requests
 import zipfile
 import torch
-import torch.nn as nn
 import numpy as np
+import torch.nn as nn
 from torch.nn.utils import weight_norm
 from loguru import logger
-import nflows
-from nflows import transforms, distributions, flows
+import normflows as nf
+from torch.utils.data import TensorDataset, DataLoader
 
 import cloudinary
 import cloudinary.uploader
@@ -87,80 +87,87 @@ class MindModel(nn.Module):
     def forward(self, x):
         return self.linear(self.tcn(x.transpose(1, 2))[:, :, -1])
 
-class NormalizingFlow(nn.Module):
-    def __init__(self, input_dim=2, num_layers=8, hidden_dim=64, device=None):
-        super().__init__()
+class FlowWrapper:
+    def __init__(self, dim=2, num_layers=5, hidden_units=32, device=None):
         self.device = device or torch.device('cpu')
-        self.input_dim = input_dim
+        self.dim = dim
         
-        # Create transform with alternating masks
-        transform_list = []
+        # Base distribution (standard Gaussian)
+        base = nf.distributions.base.DiagGaussian(dim)
+        
+        # Create flow layers
+        flows = []
         for i in range(num_layers):
-            mask = self._get_mask(i)
-            transform_list.append(transforms.MaskedAffineAutoregressiveTransform(
-                features=input_dim,
-                hidden_features=hidden_dim,
+            # Neural network for autoregressive transformation
+            arn = nf.nets.MLP([dim, hidden_units, hidden_units, dim * 3], 
+                              init_zeros=True, output_fn="sigmoid")
+            
+            # Add masked autoregressive flow layer
+            flows.append(nf.flows.MaskedAffineAutoregressive(
+                features=dim,
+                hidden_features=hidden_units,
                 context_features=None,
-                use_residual_blocks=True,
+                num_blocks=2,
+                use_residual_blocks=False,
                 random_mask=False,
-                mask=mask
+                activation=torch.nn.ReLU,
+                dropout_probability=0.0,
+                use_batch_norm=False
             ))
-            transform_list.append(transforms.RandomPermutation(input_dim))
+            
+            # Add permutation layer
+            flows.append(nf.flows.Permute(dim, mode='swap'))
         
-        # Remove last permutation
-        transform = transforms.CompositeTransform(transform_list[:-1])
-        base_distribution = distributions.StandardNormal(shape=[input_dim])
-        self.flow = flows.Flow(transform, base_distribution).to(self.device)
+        # Create normalizing flow model
+        self.model = nf.NormalizingFlow(base, flows).to(self.device)
     
-    def _get_mask(self, layer_idx):
-        # Alternate mask pattern for each layer
-        if layer_idx % 2 == 0:
-            return torch.tensor([1, 0], dtype=torch.float32).view(1, -1)
-        else:
-            return torch.tensor([0, 1], dtype=torch.float32).view(1, -1)
-    
-    def fit(self, data, epochs=100, batch_size=256, lr=0.01):
-        self.flow.train()
-        optimizer = torch.optim.Adam(self.flow.parameters(), lr=lr)
+    def fit(self, data, epochs=100, batch_size=512, lr=0.01):
+        """Train flow model using maximum likelihood"""
+        self.model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         
-        dataset = torch.utils.data.TensorDataset(torch.tensor(data, dtype=torch.float32))
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        # Create data loader
+        dataset = TensorDataset(torch.tensor(data, dtype=torch.float32))
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         for epoch in range(epochs):
-            total_log_prob = 0.0
+            total_loss = 0
             for batch in loader:
                 x = batch[0].to(self.device)
                 optimizer.zero_grad()
-                log_prob = self.flow.log_prob(x)
-                loss = -log_prob.mean()
+                
+                # Compute negative log likelihood
+                loss = -self.model.log_prob(x).mean()
                 loss.backward()
                 optimizer.step()
-                total_log_prob += log_prob.sum().item()
+                total_loss += loss.item()
             
-            avg_log_prob = total_log_prob / len(data)
+            avg_loss = total_loss / len(loader)
             if (epoch + 1) % 10 == 0:
-                logger.info(f"Flow Epoch [{epoch+1}/{epochs}], Avg Log Prob: {avg_log_prob:.4f}")
+                logger.info(f"Flow Epoch [{epoch+1}/{epochs}], NLL: {avg_loss:.4f}")
     
     def transform(self, data):
-        self.flow.eval()
+        """Transform data to latent space"""
+        self.model.eval()
         with torch.no_grad():
             data_tensor = torch.tensor(data, dtype=torch.float32, device=self.device)
-            transformed, _ = self.flow.transform_to_noise(data_tensor)
-        return transformed.cpu().numpy()
+            latent, _ = self.model.inverse(data_tensor)
+        return latent.cpu().numpy()
     
     def inverse_transform(self, latent):
-        self.flow.eval()
+        """Transform latent samples back to data space"""
+        self.model.eval()
         with torch.no_grad():
             latent_tensor = torch.tensor(latent, dtype=torch.float32, device=self.device)
-            recon, _ = self.flow._transform.inverse(latent_tensor)
-        return recon.cpu().numpy()
+            samples, _ = self.model.forward(latent_tensor)
+        return samples.cpu().numpy()
 
 class Mind:
     def __init__(self, sequence_length=20, device=None, download_on_init=False, upload_on_fail=False):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.sequence_length = sequence_length
         self.model = MindModel().to(self.device)
-        self.flow = NormalizingFlow(device=self.device)
+        self.flow = FlowWrapper(device=self.device)
         self.model_loaded_successfully = False
 
         self.MODEL_PUBLIC_ID = "mind_hl_model_v1.zip"
@@ -191,7 +198,7 @@ class Mind:
         
         # Train normalizing flow
         logger.info("Training normalizing flow...")
-        self.flow.fit(data, epochs=flow_epochs, batch_size=min(256, len(data)))
+        self.flow.fit(data, epochs=flow_epochs, batch_size=min(512, len(data)))
         data_transformed = self.flow.transform(data)
         
         # Prepare sequences and train TCN
@@ -250,7 +257,7 @@ class Mind:
         logger.info("Saving model to cloud...")
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'flow_state_dict': self.flow.state_dict()
+            'flow_state_dict': self.flow.model.state_dict()
         }, self.MODEL_LOCAL_PATH)
         
         try:
@@ -297,8 +304,11 @@ class Mind:
                     
                 state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device)
                 self.model.load_state_dict(state['model_state_dict'])
-                self.flow.load_state_dict(state['flow_state_dict'])
-                self.flow.to(self.device)
+                
+                # Reinitialize flow and load state
+                self.flow = FlowWrapper(device=self.device)
+                self.flow.model.load_state_dict(state['flow_state_dict'])
+                self.flow.model.to(self.device)
 
                 self.model.eval()
                 self.model_loaded_successfully = True
