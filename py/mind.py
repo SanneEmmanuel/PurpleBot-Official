@@ -223,13 +223,13 @@ class Mind:
                 self.model.load_state_dict(state['model_state_dict'])
                 
                 # Reconstruct scaler
-              #  params = state['scaler_params']
-              #  self.scaler = MinMaxScaler(feature_range=params['feature_range'])
-              #  self.scaler.data_min_ = params['data_min']
-             #   self.scaler.data_max_ = params['data_max']
-              #  self.scaler.scale_ = (self.scaler.feature_range[1] - self.scaler.feature_range[0]) / (
-              #      self.scaler.data_max_ - self.scaler.data_min_)
-              #  self.scaler.min_ = self.scaler.feature_range[0] - self.scaler.data_min_ * self.scaler.scale_
+                params = state['scaler_params']
+                self.scaler = MinMaxScaler(feature_range=params['feature_range'])
+                self.scaler.data_min_ = params['data_min']
+                self.scaler.data_max_ = params['data_max']
+                self.scaler.scale_ = (self.scaler.feature_range[1] - self.scaler.feature_range[0]) / (
+                    self.scaler.data_max_ - self.scaler.data_min_)
+                self.scaler.min_ = self.scaler.feature_range[0] - self.scaler.data_min_ * self.scaler.scale_
                 
                 self.model.eval()
                 self.model_loaded_successfully = True
