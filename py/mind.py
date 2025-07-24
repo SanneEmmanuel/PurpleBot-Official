@@ -189,11 +189,11 @@ class Mind:
             }
 
         }, self.MODEL_LOCAL_PATH)
-       try:
-           cloudinary.api.delete_resources([self.MODEL_PUBLIC_ID.replace(".zip", "")], resource_type='raw')
-           logger.info("🗑️ Old model deleted.")
-       except Exception as e:
-           logger.warning(f"⚠️ Delete failed: {e}")
+        try:
+            cloudinary.api.delete_resources([self.MODEL_PUBLIC_ID.replace(".zip", "")], resource_type='raw')
+            logger.info("🗑️ Old model deleted.")
+        except Exception as e:
+            logger.warning(f"⚠️ Delete failed: {e}")
  
 
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', zipfile.ZIP_DEFLATED) as zf:
