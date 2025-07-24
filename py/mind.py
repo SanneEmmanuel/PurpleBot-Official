@@ -3,11 +3,12 @@ import os
 import requests
 import zipfile
 import torch
-import numpy as np
 import torch.nn as nn
+import numpy as np
 from torch.nn.utils import weight_norm
-from sklearn.preprocessing import MinMaxScaler
 from loguru import logger
+import nflows
+from nflows import transforms, distributions, flows
 
 import cloudinary
 import cloudinary.uploader
@@ -20,10 +21,6 @@ cloudinary.config(
     api_secret="M-Trl9ltKDHyo1dIP2AaLOG-WPM",
     secure=True
 )
-from torch.serialization import add_safe_globals
-import numpy.core.multiarray
-add_safe_globals([np.ndarray,np.core.multiarray._reconstruct])
-
 
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
@@ -90,12 +87,80 @@ class MindModel(nn.Module):
     def forward(self, x):
         return self.linear(self.tcn(x.transpose(1, 2))[:, :, -1])
 
+class NormalizingFlow(nn.Module):
+    def __init__(self, input_dim=2, num_layers=8, hidden_dim=64, device=None):
+        super().__init__()
+        self.device = device or torch.device('cpu')
+        self.input_dim = input_dim
+        
+        # Create transform with alternating masks
+        transform_list = []
+        for i in range(num_layers):
+            mask = self._get_mask(i)
+            transform_list.append(transforms.MaskedAffineAutoregressiveTransform(
+                features=input_dim,
+                hidden_features=hidden_dim,
+                context_features=None,
+                use_residual_blocks=True,
+                random_mask=False,
+                mask=mask
+            ))
+            transform_list.append(transforms.RandomPermutation(input_dim))
+        
+        # Remove last permutation
+        transform = transforms.CompositeTransform(transform_list[:-1])
+        base_distribution = distributions.StandardNormal(shape=[input_dim])
+        self.flow = flows.Flow(transform, base_distribution).to(self.device)
+    
+    def _get_mask(self, layer_idx):
+        # Alternate mask pattern for each layer
+        if layer_idx % 2 == 0:
+            return torch.tensor([1, 0], dtype=torch.float32).view(1, -1)
+        else:
+            return torch.tensor([0, 1], dtype=torch.float32).view(1, -1)
+    
+    def fit(self, data, epochs=100, batch_size=256, lr=0.01):
+        self.flow.train()
+        optimizer = torch.optim.Adam(self.flow.parameters(), lr=lr)
+        
+        dataset = torch.utils.data.TensorDataset(torch.tensor(data, dtype=torch.float32))
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        for epoch in range(epochs):
+            total_log_prob = 0.0
+            for batch in loader:
+                x = batch[0].to(self.device)
+                optimizer.zero_grad()
+                log_prob = self.flow.log_prob(x)
+                loss = -log_prob.mean()
+                loss.backward()
+                optimizer.step()
+                total_log_prob += log_prob.sum().item()
+            
+            avg_log_prob = total_log_prob / len(data)
+            if (epoch + 1) % 10 == 0:
+                logger.info(f"Flow Epoch [{epoch+1}/{epochs}], Avg Log Prob: {avg_log_prob:.4f}")
+    
+    def transform(self, data):
+        self.flow.eval()
+        with torch.no_grad():
+            data_tensor = torch.tensor(data, dtype=torch.float32, device=self.device)
+            transformed, _ = self.flow.transform_to_noise(data_tensor)
+        return transformed.cpu().numpy()
+    
+    def inverse_transform(self, latent):
+        self.flow.eval()
+        with torch.no_grad():
+            latent_tensor = torch.tensor(latent, dtype=torch.float32, device=self.device)
+            recon, _ = self.flow._transform.inverse(latent_tensor)
+        return recon.cpu().numpy()
+
 class Mind:
     def __init__(self, sequence_length=20, device=None, download_on_init=False, upload_on_fail=False):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.sequence_length = sequence_length
         self.model = MindModel().to(self.device)
-        self.scaler = MinMaxScaler(feature_range=(-1, 1))
+        self.flow = NormalizingFlow(device=self.device)
         self.model_loaded_successfully = False
 
         self.MODEL_PUBLIC_ID = "mind_hl_model_v1.zip"
@@ -118,15 +183,20 @@ class Mind:
         labels = data[self.sequence_length:]
         return sequences, labels
 
-    def learn(self, data, epochs=50, lr=0.001, batch_size=32):
+    def learn(self, data, epochs=50, lr=0.001, batch_size=32, flow_epochs=100):
         if not isinstance(data, np.ndarray) or len(data) < self.sequence_length + 1:
             raise ValueError("Training data must be a numpy array with sufficient length.")
 
         logger.info(f"Mind learning from {len(data)} points for {epochs} epochs...")
-        self.model.train()
         
-        data_scaled = self.scaler.fit_transform(data)
-        X, y = self._prepare_sequences(data_scaled)
+        # Train normalizing flow
+        logger.info("Training normalizing flow...")
+        self.flow.fit(data, epochs=flow_epochs, batch_size=min(256, len(data)))
+        data_transformed = self.flow.transform(data)
+        
+        # Prepare sequences and train TCN
+        self.model.train()
+        X, y = self._prepare_sequences(data_transformed)
         
         dataset = torch.utils.data.TensorDataset(
             torch.tensor(X, dtype=torch.float32, device=self.device),
@@ -150,7 +220,7 @@ class Mind:
             avg_loss = epoch_loss / len(loader)
             epoch_losses.append(avg_loss)
             if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
-                logger.info(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.6f}")
+                logger.info(f"TCN Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.6f}")
                 
         logger.success("Learning complete.")
         return {"epoch_losses": epoch_losses, "final_loss": epoch_losses[-1]}
@@ -167,36 +237,28 @@ class Mind:
             raise ValueError(f"Input must be shape ({self.sequence_length}, 2)")
             
         try:
-            scaled = self.scaler.transform(arr)
+            transformed = self.flow.transform(arr)
             with torch.no_grad():
-                pred = self.model(torch.tensor(scaled[None], dtype=torch.float32, device=self.device))
-                prediction = self.scaler.inverse_transform(pred.cpu().numpy())[0]
+                pred = self.model(torch.tensor(transformed[None], dtype=torch.float32, device=self.device))
+                prediction = self.flow.inverse_transform(pred.cpu().numpy())
         except Exception as e:
-            raise RuntimeError("Scaler not fitted. Train or load model first.") from e
+            raise RuntimeError("Flow not trained. Train or load model first.") from e
             
-        return {"Predicted High": prediction[0], "Predicted Low": prediction[1]}
+        return {"Predicted High": prediction[0, 0], "Predicted Low": prediction[0, 1]}
 
     def sleep(self, max_attempts=3):
         logger.info("Saving model to cloud...")
         torch.save({
             'model_state_dict': self.model.state_dict(),
-            'scaler_params': {
-                'data_min': self.scaler.data_min_,
-                'data_max': self.scaler.data_max_,
-                'data_range': self.scaler.data_range_,
-                'feature_range': self.scaler.feature_range,
-                'scale_': self.scaler.scale_,
-                'min_': self.scaler.min_
-            }
-
+            'flow_state_dict': self.flow.state_dict()
         }, self.MODEL_LOCAL_PATH)
+        
         try:
             cloudinary.api.delete_resources([self.MODEL_PUBLIC_ID.replace(".zip", "")], resource_type='raw')
             logger.info("🗑️ Old model deleted.")
         except Exception as e:
             logger.warning(f"⚠️ Delete failed: {e}")
  
-
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', zipfile.ZIP_DEFLATED) as zf:
             zf.write(self.MODEL_LOCAL_PATH, os.path.basename(self.MODEL_LOCAL_PATH))
 
@@ -235,16 +297,8 @@ class Mind:
                     
                 state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device)
                 self.model.load_state_dict(state['model_state_dict'])
-                
-                # Reconstruct scaler
-                params = state['scaler_params']
-                self.scaler = MinMaxScaler(feature_range=params['feature_range'])
-                self.scaler.data_min_ = params['data_min']
-                self.scaler.data_max_ = params['data_max']
-                self.scaler.data_range_ = params['data_range']
-                self.scaler.scale_ = params['scale_']
-                self.scaler.min_ = params['min_']
-
+                self.flow.load_state_dict(state['flow_state_dict'])
+                self.flow.to(self.device)
 
                 self.model.eval()
                 self.model_loaded_successfully = True
@@ -258,7 +312,7 @@ class Mind:
         self.model_loaded_successfully = False
         return False
 
-# Example usage remains the same as original
+# Example usage
 if __name__ == '__main__':
     def generate_synthetic_data(num_points=500):
         time_arr = np.arange(0, num_points, 1)
@@ -271,7 +325,11 @@ if __name__ == '__main__':
 
     if not mind.model_loaded_successfully:
         logger.info("Training new model...")
-        train_results = mind.learn(generate_synthetic_data(1000), epochs=50)
+        train_results = mind.learn(
+            generate_synthetic_data(1000), 
+            epochs=50,
+            flow_epochs=100
+        )
         mind.sleep()
         logger.info(f"Training finished. Final loss: {train_results['final_loss']:.6f}")
     else:
