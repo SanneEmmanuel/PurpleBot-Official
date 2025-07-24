@@ -182,7 +182,7 @@ class Mind:
             'scaler_params': {
                 'data_min': self.scaler.data_min_,
                 'data_max': self.scaler.data_max_,
-                'data_range': scaler.data_range_,
+                'data_range': self.scaler.data_range_,
                 'feature_range': self.scaler.feature_range,
                 'scale_': self.scaler.scale_,
                 'min_': self.scaler.min_
