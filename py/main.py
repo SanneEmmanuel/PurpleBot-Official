@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio, websockets, json, numpy as np
 from collections import deque
 from typing import Optional
-
+from mind import Mind
 from libra6 import Libra6  # ✅ Directly import the class
 
 app = FastAPI()
@@ -56,7 +56,7 @@ async def fetch_and_store_ticks(count):
             "ticks_history": "stpRNG",
             "count": count,
             "end": "latest",
-            "style": "ticks"
+            "style": "candles"
         }))
         message = json.loads(await ws.recv())
         fetched = message.get("history", {}).get("prices", [])
@@ -67,7 +67,7 @@ async def fetch_and_store_ticks(count):
         return fetched
 
 # ✅ Branchless getTicks with fallback
-async def getTicks(count=301):
+async def getTicks(count=20):
     return (
         list(tick_buffer)[-count:]
         if len(tick_buffer) >= count
