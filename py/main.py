@@ -1,14 +1,28 @@
-from fastapi import FastAPI, HTTPException
+import os
+import json
+import asyncio
+import logging
+from fastapi import FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
-import asyncio, websockets, json, numpy as np
-from collections import deque
-from typing import Optional
+import websockets
+from pydantic import BaseModel
+from typing import Dict
 from mind import Mind
-from libra6 import Libra6  # ✅ Directly import the class
 
-app = FastAPI()
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("MindAPI")
 
-# ✅ CORS
+# Initialize FastAPI app
+app = FastAPI(
+    title="PurplePlatform Trading Prediction API",
+    description="AI-powered high/low prediction for trading instruments",
+    version="2.0.2",
+    docs_url="/docs",
+    redoc_url=None
+)
+
+# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,101 +31,170 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Tick buffer (latest 400 ticks)
-tick_buffer = deque(maxlen=400)
+# User DB path (ephemeral, resets on restart)
+USER_DB_PATH = "/tmp/user_db.json"
 
-# ✅ Load model once globally
-model = Libra6()
+# Load user DB
 try:
-    model.download_model_from_cloudinary()
-    print("✅ Model loaded from Cloudinary.")
-except Exception as e:
-    print(f"❌ Failed to load model: {e}")
+    with open(USER_DB_PATH, "r") as f:
+        USER_DB = json.load(f)
+    logger.info(f"Loaded user DB with {len(USER_DB)} users")
+except (FileNotFoundError, json.JSONDecodeError):
+    USER_DB = {}
+    logger.info("Initialized empty user DB")
 
-# ✅ Persistent WebSocket listener
-async def websocket_listener():
-    uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
-    while True:
+# Deriv API
+DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
+APP_ID = os.getenv("DERIV_APP_ID", "1089")
+SYMBOL = "stpRNG"
+GRANULARITY = 60
+
+# Initialize model (no training or fallback)
+mind = Mind(
+    sequence_length=20,
+    download_on_init=True,
+    upload_on_fail=False
+)
+logger.info("Mind model initialized. Status: %s", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
+
+# Pydantic models
+class UserCreate(BaseModel):
+    username: str
+    token: str
+
+class UserResponse(BaseModel):
+    username: str
+    token: str
+
+class PredictionRequest(BaseModel):
+    symbol: str = SYMBOL
+    granularity: int = GRANULARITY
+    token: str
+
+class PredictionResponse(BaseModel):
+    predicted_high: float
+    predicted_low: float
+    last_candle_high: float
+    last_candle_low: float
+
+# Save user DB
+def save_user_db():
+    with open(USER_DB_PATH, "w") as f:
+        json.dump(USER_DB, f)
+
+# Token validator
+def validate_token(token: str):
+    if token not in USER_DB.values():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return True
+
+# Fetch candles from Deriv
+async def get_candles(symbol: str, count: int, granularity: int) -> list:
+    logger.info("Fetching %d candles for %s (%ds)", count, symbol, granularity)
+    payload = {
+        "ticks_history": symbol,
+        "count": count,
+        "granularity": granularity,
+        "end": "latest",
+        "style": "candles"
+    }
+    for attempt in range(3):
         try:
-            async with websockets.connect(uri) as ws:
-                await ws.send(json.dumps({
-                    "ticks": "stpRNG",
-                    "subscribe": 1
-                }))
-                print("🔌 Subscribed to Deriv ticks...")
-                while True:
-                    message = json.loads(await ws.recv())
-                    tick = message.get("tick", {}).get("quote")
-                    tick and tick_buffer.append(float(tick))
+            async with websockets.connect(f"{DERIV_WS_URL}?app_id={APP_ID}") as ws:
+                await ws.send(json.dumps(payload))
+                response = json.loads(await ws.recv())
+                candles = response.get("candles")
+                if candles:
+                    return [[c["high"], c["low"]] for c in candles]
         except Exception as e:
-            print(f"❌ WebSocket error: {e}. Reconnecting in 3s...")
-            await asyncio.sleep(3)
-
-# ✅ Fetch from WebSocket if buffer is cold
-async def fetch_and_store_ticks(count):
-    print("⚠️ Not enough ticks in buffer — fetching from Deriv...")
-    uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
-    async with websockets.connect(uri) as ws:
-        await ws.send(json.dumps({
-            "ticks_history": "stpRNG",
-            "count": count,
-            "end": "latest",
-            "style": "candles"
-        }))
-        message = json.loads(await ws.recv())
-        fetched = message.get("history", {}).get("prices", [])
-        if not fetched:
-            raise RuntimeError("❌ Could not fetch fallback ticks from Deriv.")
-        tick_buffer.extend(fetched)
-        print(f"🧠 Buffer filled with {len(fetched)} fallback ticks.")
-        return fetched
-
-# ✅ Branchless getTicks with fallback
-async def getTicks(count=20):
-    return (
-        list(tick_buffer)[-count:]
-        if len(tick_buffer) >= count
-        else await fetch_and_store_ticks(count)
+            logger.error("Attempt %d failed: %s", attempt + 1, str(e))
+            await asyncio.sleep(2 ** attempt)
+    raise HTTPException(
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        detail="Unable to fetch candle data"
     )
 
-@app.get("/prices")
-async def get_prices(count: Optional[int] = 300):
-    try:
-        ticks = await getTicks(count)
-        return {
-            "data": ticks,
-            "count": len(ticks)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-        
+# Endpoints
+@app.post("/signup", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+async def signup(user: UserCreate):
+    if user.username in USER_DB:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists"
+        )
+    USER_DB[user.username] = user.token
+    save_user_db()
+    logger.info("User created: %s", user.username)
+    return {"username": user.username, "token": user.token}
 
+@app.get("/findUser", response_model=UserResponse)
+async def find_user(username: str = Query(...)):
+    if username not in USER_DB:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return {"username": username, "token": USER_DB[username]}
 
-# ✅ Updated Prediction endpoint with ticks parameter
-@app.post("/predict")
-async def predict(ticks: Optional[int] = 5):
-    if model is None:
-        return {"error": "Model not loaded."}
-
-    if ticks <= 0:
-        raise HTTPException(status_code=400, detail="Number of ticks must be positive")
-
-    history = await getTicks()
-    model.update(history)
-    predicted = model.predictWithConfidence(num_ticks=ticks) 
-    return predicted
-
-
-@app.get("/", include_in_schema=False)
-@app.head("/", include_in_schema=False)
-def root():
+@app.get("/health")
+async def health_check():
     return {
         "status": "ok",
-        "model_loaded": model is not None,
-        "tick_buffer_len": len(tick_buffer)
+        "model_loaded": mind.model_loaded_successfully,
+        "users_registered": len(USER_DB),
+        "storage": "ephemeral (/tmp)"
     }
 
-# ✅ Startup: Launch WebSocket listener
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(websocket_listener())
+@app.post("/predict", response_model=PredictionResponse)
+async def predict(request: PredictionRequest):
+    validate_token(request.token)
+    try:
+        candles = await get_candles(
+            symbol=request.symbol,
+            count=mind.sequence_length,
+            granularity=request.granularity
+        )
+    except Exception as e:
+        logger.exception("Failed to get candles")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Candle fetch error: {str(e)}"
+        )
+
+    if len(candles) != mind.sequence_length:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Expected {mind.sequence_length} candles, got {len(candles)}"
+        )
+
+    try:
+        last_candle = candles[-1]
+        prediction = mind.predict(candles)
+    except Exception as e:
+        logger.exception("Prediction error")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Prediction failed: {str(e)}"
+        )
+
+    return {
+        "predicted_high": prediction["Predicted High"],
+        "predicted_low": prediction["Predicted Low"],
+        "last_candle_high": last_candle[0],
+        "last_candle_low": last_candle[1]
+    }
+
+@app.on_event("shutdown")
+def persist_shutdown():
+    save_user_db()
+    logger.info("Saved DB on shutdown")
+
+# Dev server entry
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
