@@ -1,17 +1,17 @@
 import os
 import json
 import asyncio
-import logging
 from fastapi import FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 import websockets
 from pydantic import BaseModel
 from typing import Dict
 from mind import Mind
+from loguru import logger  # Replaced logging with loguru
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("MindAPI")
+# Configure loguru
+logger.add("mind_api.log", rotation="10 MB", retention=3)
+logger.info("Starting MindAPI")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -55,7 +55,7 @@ mind = Mind(
     download_on_init=True,
     upload_on_fail=False
 )
-logger.info("Mind model initialized. Status: %s", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
+logger.info("Mind model initialized. Status: {}", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
 
 # Pydantic models
 class UserCreate(BaseModel):
@@ -94,7 +94,7 @@ def validate_token(token: str):
 
 # Fetch candles from Deriv
 async def get_candles(symbol: str, count: int, granularity: int) -> list:
-    logger.info("Fetching %d candles for %s (%ds)", count, symbol, granularity)
+    logger.info("Fetching {} candles for {} ({}s)", count, symbol, granularity)
     payload = {
         "ticks_history": symbol,
         "count": count,
@@ -111,7 +111,7 @@ async def get_candles(symbol: str, count: int, granularity: int) -> list:
                 if candles:
                     return [[c["high"], c["low"]] for c in candles]
         except Exception as e:
-            logger.error("Attempt %d failed: %s", attempt + 1, str(e))
+            logger.error("Attempt {} failed: {}", attempt + 1, str(e))
             await asyncio.sleep(2 ** attempt)
     raise HTTPException(
         status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -128,7 +128,7 @@ async def signup(user: UserCreate):
         )
     USER_DB[user.username] = user.token
     save_user_db()
-    logger.info("User created: %s", user.username)
+    logger.info("User created: {}", user.username)
     return {"username": user.username, "token": user.token}
 
 @app.get("/findUser", response_model=UserResponse)
