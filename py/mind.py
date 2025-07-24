@@ -20,9 +20,10 @@ cloudinary.config(
     api_secret="M-Trl9ltKDHyo1dIP2AaLOG-WPM",
     secure=True
 )
-import numpy.core.multiarray
 from torch.serialization import add_safe_globals
-add_safe_globals([np.core.multiarray._reconstruct])
+import numpy.core.multiarray
+add_safe_globals([np.ndarray,np.core.multiarray._reconstruct])
+
 
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
