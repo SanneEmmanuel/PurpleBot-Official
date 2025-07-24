@@ -182,8 +182,11 @@ class Mind:
             'scaler_params': {
                 'data_min': self.scaler.data_min_,
                 'data_max': self.scaler.data_max_,
-                'feature_range': self.scaler.feature_range
+                'feature_range': self.scaler.feature_range,
+                'scale_': self.scaler.scale_,
+                'min_': self.scaler.min_
             }
+
         }, self.MODEL_LOCAL_PATH)
 
         with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', zipfile.ZIP_DEFLATED) as zf:
