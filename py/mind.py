@@ -15,8 +15,7 @@ import cloudinary.api
 # --- PyTorch Compatibility Fix ---
 # This addresses the "Unsupported global: numpy._core.multiarray._reconstruct" error
 # by explicitly trusting the numpy global during deserialization.
-# Although we will set weights_only=False, this makes the code more robust
-# for different PyTorch versions and environments.
+# This is necessary for loading the norm_params file safely.
 from torch.serialization import add_safe_globals
 import numpy.core.multiarray
 
@@ -117,9 +116,10 @@ class Mind:
         self.model_loaded_successfully = False
         self.norm_params = {}
 
-        self.MODEL_PUBLIC_ID = "mind_hl_model_v1"
-        self.MODEL_LOCAL_PATH = "/tmp/mind.pt"
-        self.ZIP_LOCAL_PATH = "/tmp/mind.zip"
+        self.MODEL_PUBLIC_ID = "mind_hl_model_v2"
+        self.MODEL_WEIGHTS_LOCAL_PATH = "/tmp/mind_v2.pt"
+        self.NORM_PARAMS_LOCAL_PATH = "/tmp/norm_param.pt"
+        self.ZIP_LOCAL_PATH = "/tmp/mind_v2.zip"
 
         logger.info(f"🧠 Mind initialized on device: {self.device}")
 
@@ -231,24 +231,25 @@ class Mind:
         return {"Predicted High": prediction[0], "Predicted Low": prediction[1]}
 
     def sleep(self, max_attempts=3):
-        """Saves the model and normalization parameters to the cloud."""
+        """Saves the model weights and normalization parameters to separate files, zips them, and uploads to the cloud."""
         if not self.norm_params:
             logger.error("Cannot save model: Normalization parameters are missing. Please train the model first.")
             return False
 
-        logger.info("Saving model to cloud...")
-        torch.save({
-            'model_state_dict': self.model.state_dict(),
-            'norm_params': self.norm_params
-        }, self.MODEL_LOCAL_PATH)
+        logger.info("Saving model and normalization parameters...")
+        torch.save(self.model.state_dict(), self.MODEL_WEIGHTS_LOCAL_PATH)
+        torch.save(self.norm_params, self.NORM_PARAMS_LOCAL_PATH)
 
+        logger.info(f"Zipping artifacts to {self.ZIP_LOCAL_PATH}...")
         try:
             with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'w', zipfile.ZIP_DEFLATED) as zf:
-                zf.write(self.MODEL_LOCAL_PATH, os.path.basename(self.MODEL_LOCAL_PATH))
+                zf.write(self.MODEL_WEIGHTS_LOCAL_PATH, os.path.basename(self.MODEL_WEIGHTS_LOCAL_PATH))
+                zf.write(self.NORM_PARAMS_LOCAL_PATH, os.path.basename(self.NORM_PARAMS_LOCAL_PATH))
         except Exception as e:
             logger.error(f"Failed to create zip file: {e}")
             return False
 
+        logger.info("Uploading model to cloud...")
         for attempt in range(max_attempts):
             try:
                 cloudinary.uploader.upload(
@@ -269,6 +270,7 @@ class Mind:
     def awaken(self, max_attempts=3):
         """Loads the model and normalization parameters from the cloud."""
         logger.info("Loading model from cloud...")
+        url = ""
         for attempt in range(max_attempts):
             try:
                 # Construct the URL for the zip file
@@ -281,19 +283,18 @@ class Mind:
                 with open(self.ZIP_LOCAL_PATH, 'wb') as f:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
-                        
-                with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'r') as zf:
-                    zf.extractall(os.path.dirname(self.MODEL_LOCAL_PATH))
                 
-                # *** ERROR FIX: Set weights_only=False to allow loading files with numpy arrays ***
-                state = torch.load(self.MODEL_LOCAL_PATH, map_location=self.device, weights_only=False)
-
-                # Verify that the loaded state contains the necessary keys
-                if 'model_state_dict' not in state or 'norm_params' not in state:
-                    raise KeyError("Loaded state is incomplete. Missing 'model_state_dict' or 'norm_params'.")
-
-                self.model.load_state_dict(state['model_state_dict'])
-                self.norm_params = state['norm_params']
+                logger.info("Extracting model files...")
+                with zipfile.ZipFile(self.ZIP_LOCAL_PATH, 'r') as zf:
+                    zf.extractall(os.path.dirname(self.MODEL_WEIGHTS_LOCAL_PATH))
+                
+                # Load the model weights and normalization parameters from their respective files
+                logger.info(f"Loading weights from {self.MODEL_WEIGHTS_LOCAL_PATH}")
+                self.model.load_state_dict(torch.load(self.MODEL_WEIGHTS_LOCAL_PATH, map_location=self.device))
+                
+                logger.info(f"Loading normalization params from {self.NORM_PARAMS_LOCAL_PATH}")
+                # Must use weights_only=False for files containing non-tensor objects like numpy arrays
+                self.norm_params = torch.load(self.NORM_PARAMS_LOCAL_PATH, weights_only=False)
                 
                 self.model.eval()
                 self.model_loaded_successfully = True
@@ -302,6 +303,8 @@ class Mind:
 
             except Exception as e:
                 logger.warning(f"Download attempt {attempt+1} failed: {e}")
+                if url:
+                    logger.info(f"Failed download URL: {url}")
                 time.sleep(2 ** attempt)
                 
         logger.error("All download attempts failed.")
