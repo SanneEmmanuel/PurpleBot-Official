@@ -50,12 +50,8 @@ SYMBOL = "stpRNG"
 GRANULARITY = 60
 
 # Initialize model (no training or fallback)
-mind = Mind(
-    sequence_length=20,
-    download_on_init=True,
-    upload_on_fail=False
-)
-logger.info("Mind model initialized. Status: {}", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
+mind = Mind(sequence_length=20, download_on_init=True)
+Trulogger.info("Mind model initialized. Status: {}", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
 
 # Pydantic models
 class UserCreate(BaseModel):
