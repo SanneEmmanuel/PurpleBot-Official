@@ -1,35 +1,36 @@
-# Use a base Python image
-FROM python:3.10-slim
+# Use slim base image
+FROM python:3.10-slim-bullseye
 
-# Set working directory inside the container
+# Set working directory
 WORKDIR /app
 
-# Install system dependencies (including Rust and build tools)
+# Install system dependencies + Node.js 20.x
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
-        curl \
-        git \
         gcc \
-        pkg-config \
-        libssl-dev \
         libffi-dev \
-        python3-dev \
-        rustc \
-        cargo \
-        wget && \
+        libssl-dev \
+        curl \
+        wget \
+        git \
+        ca-certificates && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python packages
+# Install Python dependencies
 COPY ./py/requirements.txt ./requirements.txt
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy FastAPI app source code
+# Copy app files
 COPY ./py /app
+COPY ./js/main.js /app/main.js
 
-# Expose the port FastAPI will run on
-EXPOSE 10000
+# Expose ports for both FastAPI and Node.js socket server
+EXPOSE 10000 3000
 
-# Start FastAPI server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
+# Start both servers in a single CMD using bash
+CMD bash -c "uvicorn main:app --host 0.0.0.0 --port 10000 --workers 1 & node /app/main.js"
