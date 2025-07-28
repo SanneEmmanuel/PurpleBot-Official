@@ -17,9 +17,9 @@ cython==3.1.2
 # WebSocket + Async
 # ========================
 websockets==15.0.1
-picows==0.2.3        # Lightweight async WebSocket client (C-powered)
+picows==1.9.0        # Latest version compatible with Python 3.10
 nest_asyncio==1.6.0
-aiohttp==3.9.5        # Required for HTTP requests in async trader
+aiohttp==3.9.5       # Required by trader.py for async HTTP requests
 
 # ========================
 # Schema Validation
