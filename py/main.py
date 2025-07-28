@@ -1,39 +1,48 @@
 import os
+import sys
 import json
 import asyncio
-import sys
-from datetime import datetime, timedelta
 import websockets
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from loguru import logger
-from mind import Mind
+from mind import Mind  # Your custom AI model wrapper
 
-# Logger
+# Logger setup
 logger.remove()
 logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
 
+# FastAPI app setup
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Constants
 DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
-APP_ID = os.getenv("DERIV_APP_ID", "1089")
+APP_ID = os.getenv("DERIV_APP_ID", "1089")  # Use your App ID or default
 SYMBOL = "stpRNG"
-GRANULARITY = 60  # seconds
+GRANULARITY = 60
 SEQUENCE_LENGTH = 20
 
-# App & model
-app = FastAPI()
+# Model
 mind = Mind(sequence_length=SEQUENCE_LENGTH, download_on_init=True)
 
-# Response schema
+# Response model
 class PredictionResponse(BaseModel):
     predicted_high: float
     predicted_low: float
     last_candle_high: float
     last_candle_low: float
 
-# Fetch past candles, excluding most recent 1 minute
+# Candle fetcher
 async def get_candles():
-    # Compute UTC timestamp 1 minute ago
     end_time = int((datetime.utcnow() - timedelta(minutes=1)).timestamp())
     payload = {
         "ticks_history": SYMBOL,
@@ -49,23 +58,23 @@ async def get_candles():
                 await ws.send(json.dumps(payload))
                 response = await ws.recv()
                 data = json.loads(response)
-                if "candles" in data:
-                    return [[c["high"], c["low"]] for c in data["candles"]]
+
+                if "candles" in data and isinstance(data["candles"], list):
+                    candles = [[c["high"], c["low"]] for c in data["candles"]]
+                    if len(candles) >= SEQUENCE_LENGTH:
+                        return candles
         except Exception as e:
-            logger.warning("Attempt {}: Candle fetch failed - {}", attempt + 1, str(e))
+            logger.warning(f"Attempt {attempt + 1}: Candle fetch failed - {str(e)}")
             await asyncio.sleep(1)
 
     raise HTTPException(status_code=504, detail="Failed to fetch candle data")
 
-# Health check
+# Health check endpoint
 @app.get("/health")
 async def health_check():
-    return {
-        "status": "ok",
-        "model_loaded": mind.model_loaded_successfully
-    }
+    return {"status": "ok", "model_loaded": mind.model_loaded_successfully}
 
-# Predict endpoint (GET)
+# Prediction endpoint
 @app.get("/predict", response_model=PredictionResponse)
 async def predict():
     if not mind.model_loaded_successfully:
@@ -85,5 +94,5 @@ async def predict():
             "last_candle_low": last[1]
         }
     except Exception as e:
-        logger.error("Prediction error: {}", str(e))
+        logger.error(f"Prediction error: {str(e)}")
         raise HTTPException(status_code=500, detail="Prediction failed")
