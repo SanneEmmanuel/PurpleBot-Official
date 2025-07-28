@@ -2,19 +2,28 @@ import os
 import sys
 import json
 import asyncio
+import subprocess
 import websockets
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from loguru import logger
-from mind import Mind  # Your custom AI model wrapper
+from mind import Mind
+
+# Constants
+USER_FILE = "/tmp/user.json"
+DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
+APP_ID = os.getenv("DERIV_APP_ID", "1089")
+SYMBOL = "stpRNG"
+GRANULARITY = 60
+SEQUENCE_LENGTH = 20
 
 # Logger setup
 logger.remove()
 logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
 
-# FastAPI app setup
+# App setup
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -24,24 +33,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Constants
-DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
-APP_ID = os.getenv("DERIV_APP_ID", "1089")  # Use your App ID or default
-SYMBOL = "stpRNG"
-GRANULARITY = 60
-SEQUENCE_LENGTH = 20
-
-# Model
+# Load model
 mind = Mind(sequence_length=SEQUENCE_LENGTH, download_on_init=True)
 
-# Response model
+# Ensure user file exists
+if not os.path.exists(USER_FILE):
+    with open(USER_FILE, "w") as f:
+        json.dump([], f)
+
+# --- Models ---
 class PredictionResponse(BaseModel):
     predicted_high: float
     predicted_low: float
     last_candle_high: float
     last_candle_low: float
 
-# Candle fetcher
+class TokenRequest(BaseModel):
+    token: str
+
+# --- Utility Functions ---
+def load_users():
+    with open(USER_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users):
+    with open(USER_FILE, "w") as f:
+        json.dump(users, f)
+
+def is_registered(token: str):
+    users = load_users()
+    return any(u.get("token") == token for u in users)
+
+# --- WebSocket Candle Fetch ---
 async def get_candles():
     end_time = int((datetime.utcnow() - timedelta(minutes=1)).timestamp())
     payload = {
@@ -69,12 +92,11 @@ async def get_candles():
 
     raise HTTPException(status_code=504, detail="Failed to fetch candle data")
 
-# Health check endpoint
+# --- Endpoints ---
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "model_loaded": mind.model_loaded_successfully}
 
-# Prediction endpoint
 @app.get("/predict", response_model=PredictionResponse)
 async def predict():
     if not mind.model_loaded_successfully:
@@ -96,3 +118,34 @@ async def predict():
     except Exception as e:
         logger.error(f"Prediction error: {str(e)}")
         raise HTTPException(status_code=500, detail="Prediction failed")
+
+@app.post("/register")
+async def register_user(req: TokenRequest):
+    if is_registered(req.token):
+        raise HTTPException(status_code=400, detail="User already registered")
+    users = load_users()
+    users.append({"token": req.token})
+    save_users(users)
+    return {"message": "User registered successfully"}
+
+@app.post("/check")
+async def check_user(req: TokenRequest):
+    if is_registered(req.token):
+        return {"registered": True}
+    return {"registered": False}
+
+@app.post("/delete")
+async def delete_user(req: TokenRequest):
+    users = load_users()
+    users = [u for u in users if u.get("token") != req.token]
+    save_users(users)
+    return {"message": "User deleted if existed"}
+
+# --- Launch trader.py on startup ---
+@app.on_event("startup")
+async def launch_trader():
+    try:
+        subprocess.Popen(["python3", "trader.py"])
+        logger.info("✅ trader.py started successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to launch trader.py: {str(e)}")
