@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import sys
 from fastapi import FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 import websockets
@@ -9,8 +10,10 @@ from typing import Dict
 from mind import Mind
 from loguru import logger  # Replaced logging with loguru
 
-# Configure loguru
-logger.add("mind_api.log", rotation="10 MB", retention=3)
+# Configure loguru for Render compatibility (stdout only)
+logger.remove()
+logger.add(sys.stdout, format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {message}")
+
 logger.info("Starting MindAPI")
 
 # Initialize FastAPI app
@@ -36,12 +39,16 @@ USER_DB_PATH = "/tmp/user_db.json"
 
 # Load user DB
 try:
-    with open(USER_DB_PATH, "r") as f:
-        USER_DB = json.load(f)
-    logger.info(f"Loaded user DB with {len(USER_DB)} users")
-except (FileNotFoundError, json.JSONDecodeError):
+    if os.path.exists(USER_DB_PATH):
+        with open(USER_DB_PATH, "r") as f:
+            USER_DB = json.load(f)
+        logger.info(f"Loaded user DB with {len(USER_DB)} users")
+    else:
+        USER_DB = {}
+        logger.info("Initialized empty user DB")
+except json.JSONDecodeError:
     USER_DB = {}
-    logger.info("Initialized empty user DB")
+    logger.warning("User DB corrupted. Initializing empty DB")
 
 # Deriv API
 DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
@@ -49,9 +56,9 @@ APP_ID = os.getenv("DERIV_APP_ID", "1089")
 SYMBOL = "stpRNG"
 GRANULARITY = 60
 
-# Initialize model (no training or fallback)
+# Initialize model
 mind = Mind(sequence_length=20, download_on_init=True)
-Trulogger.info("Mind model initialized. Status: {}", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
+logger.info("Mind model initialized. Status: {}", "Loaded" if mind.model_loaded_successfully else "Not Loaded")
 
 # Pydantic models
 class UserCreate(BaseModel):
@@ -98,20 +105,35 @@ async def get_candles(symbol: str, count: int, granularity: int) -> list:
         "end": "latest",
         "style": "candles"
     }
+    
     for attempt in range(3):
         try:
-            async with websockets.connect(f"{DERIV_WS_URL}?app_id={APP_ID}") as ws:
-                await ws.send(json.dumps(payload))
-                response = json.loads(await ws.recv())
-                candles = response.get("candles")
+            async with websockets.connect(
+                f"{DERIV_WS_URL}?app_id={APP_ID}",
+                ping_timeout=10,
+                close_timeout=10
+            ) as ws:
+                await asyncio.wait_for(ws.send(json.dumps(payload)), timeout=5)
+                response = await asyncio.wait_for(ws.recv(), timeout=10)
+                data = json.loads(response)
+                
+                if "error" in data:
+                    logger.error("Deriv API error: {}", data["error"]["message"])
+                    continue
+                    
+                candles = data.get("candles")
                 if candles:
                     return [[c["high"], c["low"]] for c in candles]
-        except Exception as e:
-            logger.error("Attempt {} failed: {}", attempt + 1, str(e))
+        except (asyncio.TimeoutError, websockets.ConnectionClosed) as e:
+            logger.warning("Attempt {} failed: {}", attempt + 1, str(e))
             await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            logger.error("Unexpected error: {}", str(e))
+            await asyncio.sleep(1)
+    
     raise HTTPException(
         status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-        detail="Unable to fetch candle data"
+        detail="Unable to fetch candle data after 3 attempts"
     )
 
 # Endpoints
@@ -148,6 +170,13 @@ async def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: PredictionRequest):
     validate_token(request.token)
+    
+    if not mind.model_loaded_successfully:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Prediction model not loaded"
+        )
+    
     try:
         candles = await get_candles(
             symbol=request.symbol,
@@ -161,7 +190,7 @@ async def predict(request: PredictionRequest):
             detail=f"Candle fetch error: {str(e)}"
         )
 
-    if len(candles) != mind.sequence_length:
+    if len(candles) < mind.sequence_length:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Expected {mind.sequence_length} candles, got {len(candles)}"
