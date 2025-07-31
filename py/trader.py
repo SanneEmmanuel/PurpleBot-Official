@@ -2,7 +2,7 @@ import asyncio, json, aiohttp
 from picows import WebSocketClient
 
 DERIV_WS = "wss://ws.derivws.com/websockets/v3"
-PREDICT_URL = "http://localhost:10000/predict"
+PREDICT_URL = "https://purplebot-official.onrender.com/predict"
 SYMBOL = "stpRNG"
 
 def load_users():
